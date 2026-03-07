@@ -1,0 +1,21 @@
+/* Global styles, font theme, and scrollbar customization */
+@import 'tailwindcss';
+
+@theme {
+	--font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+}
+
+::-webkit-scrollbar {
+	width: 5px;
+	height: 5px;
+}
+::-webkit-scrollbar-track {
+	background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+	background: #1e293b;
+	border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: #334155;
+}

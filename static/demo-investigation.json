@@ -1,0 +1,316 @@
+{
+  "version": 2,
+  "exportedAt": "2026-03-03T09:00:00.000Z",
+  "center": { "lat": -31.953, "lng": 115.857 },
+  "zoom": 15,
+  "pins": [
+    {
+      "id": "pin-1",
+      "lat": -31.9530,
+      "lng": 115.8570,
+      "label": "Warehouse 7B — Primary Break-in Site",
+      "layerId": "scene"
+    },
+    {
+      "id": "pin-2",
+      "lat": -31.9540,
+      "lng": 115.8585,
+      "label": "Forced Entry Point (Rear Loading Dock)",
+      "layerId": "scene"
+    },
+    {
+      "id": "pin-3",
+      "lat": -31.9490,
+      "lng": 115.8510,
+      "label": "Witness 1 — J. Martinez (Dog Walker)",
+      "layerId": "scene"
+    },
+    {
+      "id": "pin-4",
+      "lat": -31.9475,
+      "lng": 115.8630,
+      "label": "Witness 2 — S. Chen (Night Shift Worker)",
+      "layerId": "scene"
+    },
+    {
+      "id": "pin-5",
+      "lat": -31.9505,
+      "lng": 115.8500,
+      "label": "CCTV Camera A — Murray St & Pier",
+      "layerId": "surveillance"
+    },
+    {
+      "id": "pin-6",
+      "lat": -31.9560,
+      "lng": 115.8600,
+      "label": "CCTV Camera B — Dock Rd Entrance",
+      "layerId": "surveillance"
+    },
+    {
+      "id": "pin-7",
+      "lat": -31.9575,
+      "lng": 115.8650,
+      "label": "CCTV Camera C — Marina Lot",
+      "layerId": "surveillance"
+    },
+    {
+      "id": "pin-8",
+      "lat": -31.9440,
+      "lng": 115.8680,
+      "label": "Abandoned Vehicle (Silver Honda Civic)",
+      "layerId": "suspect"
+    },
+    {
+      "id": "pin-9",
+      "lat": -31.9415,
+      "lng": 115.8720,
+      "label": "Suspect Last Seen — Heading East on Adelaide Tce",
+      "layerId": "suspect"
+    },
+    {
+      "id": "pin-10",
+      "lat": -31.9535,
+      "lng": 115.8578,
+      "label": "Toolmarks on Door Frame",
+      "layerId": "evidence"
+    },
+    {
+      "id": "pin-11",
+      "lat": -31.9550,
+      "lng": 115.8595,
+      "label": "Footprint Cast #1 (Size 11 Boot)",
+      "layerId": "evidence"
+    },
+    {
+      "id": "pin-12",
+      "lat": -31.9515,
+      "lng": 115.8620,
+      "label": "Dropped Glove (Latex, Right Hand)",
+      "layerId": "evidence"
+    },
+    {
+      "id": "pin-13",
+      "lat": -31.9565,
+      "lng": 115.8560,
+      "label": "Discarded Pry Bar in Dumpster",
+      "layerId": "evidence"
+    },
+    {
+      "id": "pin-14",
+      "lat": -31.9460,
+      "lng": 115.8470,
+      "label": "Command Post (IC Staging Area)",
+      "layerId": "response"
+    },
+    {
+      "id": "pin-15",
+      "lat": -31.9480,
+      "lng": 115.8530,
+      "label": "Road Block — Murray St North",
+      "layerId": "response"
+    },
+    {
+      "id": "pin-16",
+      "lat": -31.9590,
+      "lng": 115.8540,
+      "label": "Road Block — Riverside Dr South",
+      "layerId": "response"
+    }
+  ],
+  "drawings": [
+    {
+      "id": "draw-1",
+      "type": "polygon",
+      "color": "#ef4444",
+      "strokeWidth": 3,
+      "label": "Crime Scene Perimeter",
+      "layerId": "scene",
+      "points": [
+        { "lat": -31.9515, "lng": 115.8550 },
+        { "lat": -31.9515, "lng": 115.8600 },
+        { "lat": -31.9555, "lng": 115.8600 },
+        { "lat": -31.9555, "lng": 115.8550 }
+      ]
+    },
+    {
+      "id": "draw-2",
+      "type": "polygon",
+      "color": "#22d3ee",
+      "strokeWidth": 2,
+      "label": "Expanded Search Zone",
+      "layerId": "response",
+      "points": [
+        { "lat": -31.9450, "lng": 115.8480 },
+        { "lat": -31.9450, "lng": 115.8680 },
+        { "lat": -31.9600, "lng": 115.8680 },
+        { "lat": -31.9600, "lng": 115.8480 }
+      ]
+    },
+    {
+      "id": "draw-3",
+      "type": "polygon",
+      "color": "#f59e0b",
+      "strokeWidth": 2,
+      "label": "Evidence Cluster — Loading Dock",
+      "layerId": "evidence",
+      "points": [
+        { "lat": -31.9525, "lng": 115.8570 },
+        { "lat": -31.9525, "lng": 115.8600 },
+        { "lat": -31.9555, "lng": 115.8605 },
+        { "lat": -31.9565, "lng": 115.8575 },
+        { "lat": -31.9548, "lng": 115.8555 }
+      ]
+    },
+    {
+      "id": "draw-4",
+      "type": "arrow",
+      "color": "#8b5cf6",
+      "strokeWidth": 3,
+      "label": "Suspect Approach (from Vehicle)",
+      "layerId": "suspect",
+      "points": [
+        { "lat": -31.9440, "lng": 115.8680 },
+        { "lat": -31.9460, "lng": 115.8660 },
+        { "lat": -31.9485, "lng": 115.8630 },
+        { "lat": -31.9510, "lng": 115.8600 },
+        { "lat": -31.9530, "lng": 115.8580 }
+      ]
+    },
+    {
+      "id": "draw-5",
+      "type": "arrow",
+      "color": "#ec4899",
+      "strokeWidth": 3,
+      "label": "Suspect Escape Route",
+      "layerId": "suspect",
+      "points": [
+        { "lat": -31.9535, "lng": 115.8585 },
+        { "lat": -31.9520, "lng": 115.8610 },
+        { "lat": -31.9500, "lng": 115.8640 },
+        { "lat": -31.9475, "lng": 115.8665 },
+        { "lat": -31.9455, "lng": 115.8685 },
+        { "lat": -31.9440, "lng": 115.8680 },
+        { "lat": -31.9425, "lng": 115.8700 },
+        { "lat": -31.9415, "lng": 115.8720 }
+      ]
+    },
+    {
+      "id": "draw-6",
+      "type": "polyline",
+      "color": "#22d3ee",
+      "strokeWidth": 2,
+      "label": "Unit 14 Response Path",
+      "layerId": "response",
+      "points": [
+        { "lat": -31.9460, "lng": 115.8470 },
+        { "lat": -31.9470, "lng": 115.8500 },
+        { "lat": -31.9485, "lng": 115.8520 },
+        { "lat": -31.9500, "lng": 115.8545 },
+        { "lat": -31.9515, "lng": 115.8560 },
+        { "lat": -31.9530, "lng": 115.8570 }
+      ]
+    },
+    {
+      "id": "draw-7",
+      "type": "polyline",
+      "color": "#10b981",
+      "strokeWidth": 2,
+      "label": "Unit 22 Response Path",
+      "layerId": "response",
+      "points": [
+        { "lat": -31.9590, "lng": 115.8540 },
+        { "lat": -31.9575, "lng": 115.8555 },
+        { "lat": -31.9560, "lng": 115.8565 },
+        { "lat": -31.9545, "lng": 115.8575 },
+        { "lat": -31.9535, "lng": 115.8580 }
+      ]
+    },
+    {
+      "id": "draw-8",
+      "type": "circle",
+      "color": "#64748b",
+      "strokeWidth": 1,
+      "label": "CCTV-A Coverage (est. 80m)",
+      "layerId": "surveillance",
+      "radius": 80,
+      "points": [
+        { "lat": -31.9505, "lng": 115.8500 }
+      ]
+    },
+    {
+      "id": "draw-9",
+      "type": "circle",
+      "color": "#64748b",
+      "strokeWidth": 1,
+      "label": "CCTV-B Coverage (est. 60m)",
+      "layerId": "surveillance",
+      "radius": 60,
+      "points": [
+        { "lat": -31.9560, "lng": 115.8600 }
+      ]
+    },
+    {
+      "id": "draw-10",
+      "type": "circle",
+      "color": "#64748b",
+      "strokeWidth": 1,
+      "label": "CCTV-C Coverage (est. 90m)",
+      "layerId": "surveillance",
+      "radius": 90,
+      "points": [
+        { "lat": -31.9575, "lng": 115.8650 }
+      ]
+    },
+    {
+      "id": "draw-11",
+      "type": "note",
+      "color": "#f59e0b",
+      "strokeWidth": 2,
+      "label": "Timeline Note",
+      "layerId": "scene",
+      "text": "02:14 — Alarm triggered\n02:17 — Dispatch notified\n02:23 — Unit 14 on scene\n02:31 — Perimeter established",
+      "points": [
+        { "lat": -31.9500, "lng": 115.8540 }
+      ]
+    },
+    {
+      "id": "draw-12",
+      "type": "note",
+      "color": "#8b5cf6",
+      "strokeWidth": 2,
+      "label": "Vehicle Note",
+      "layerId": "suspect",
+      "text": "Silver Honda Civic — Plates: 1WQR-491\nRegistered to: R. Dominguez\nReported stolen 03/01",
+      "points": [
+        { "lat": -31.9430, "lng": 115.8695 }
+      ]
+    },
+    {
+      "id": "draw-13",
+      "type": "polyline",
+      "color": "#64748b",
+      "strokeWidth": 2,
+      "label": "Witness 1 Walking Route",
+      "layerId": "surveillance",
+      "points": [
+        { "lat": -31.9470, "lng": 115.8490 },
+        { "lat": -31.9478, "lng": 115.8500 },
+        { "lat": -31.9485, "lng": 115.8508 },
+        { "lat": -31.9490, "lng": 115.8510 }
+      ]
+    }
+  ],
+  "layers": [
+    { "id": "scene", "name": "Crime Scene", "visible": true, "color": "#ef4444" },
+    { "id": "suspect", "name": "Suspect Movement", "visible": true, "color": "#8b5cf6" },
+    { "id": "evidence", "name": "Evidence Markers", "visible": true, "color": "#f59e0b" },
+    { "id": "response", "name": "First Response", "visible": true, "color": "#22d3ee" },
+    { "id": "surveillance", "name": "Surveillance", "visible": true, "color": "#64748b" }
+  ],
+  "routes": [],
+  "travelMode": "DRIVING",
+  "labelsVisible": true,
+  "notesVisible": true,
+  "heatmapEnabled": false,
+  "isSatellite": true
+}
