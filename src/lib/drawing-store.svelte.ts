@@ -107,7 +107,7 @@ function createDrawingStore() {
 		},
 
 		// Updates a drawing's label, color, strokeWidth, or layer assignment
-		updateDrawing(id: string, updates: Partial<Pick<Drawing, 'label' | 'color' | 'strokeWidth' | 'layerId' | 'animated' | 'reversed' | 'timestamp'>>) {
+		updateDrawing(id: string, updates: Partial<Pick<Drawing, 'label' | 'color' | 'strokeWidth' | 'layerId' | 'animated' | 'reversed' | 'timestamp' | 'endTimestamp'>>) {
 			if (updates.layerId) {
 				const newLayer = layerStore.layers.find((l) => l.id === updates.layerId);
 				if (newLayer) {

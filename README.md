@@ -28,6 +28,7 @@
 - **Nearby Search** - Find restaurants, parks, and other places within a configurable radius using Google Places
 - **Distance Matrix** - View color-coded distance comparisons between all visible pins
 - **Layer System** - Organize pins and drawings into named, color-coded groups with visibility toggles
+- **Timeline** - Scrub through timestamped pins and drawings chronologically with adjustable playback speed and per-layer filtering
 - **Link Sharing** - Compress full map state into a shareable URL using DeflateRaw with optional AES-GCM encryption
 - **Import / Export** - Save and restore map state via JSON files or import location data from CSV
 
@@ -76,6 +77,7 @@ Distance calculations use the Haversine formula. Polygon areas use the spherical
 ## Notes
 
 - **Browser** - Desktop only (1024px+ screen width), requires CompressionStream API (Chrome 80+, Firefox 113+, Safari 16.4+, Edge 80+)
+- **API Key** - Requires a Google Maps JavaScript API key with Places, Geocoding, Directions, and Street View enabled
 - **Stack** - SvelteKit, Svelte 5, TypeScript, Tailwind CSS, Vite, deployed on Vercel
 - **Coordinates** - Rounded to 6 decimal places (~1m precision) in shared URLs
 - **Limits** - Pin labels 80 chars, note text 200 chars, layer names 40 chars, CSV import capped at 100 pins

@@ -8,10 +8,31 @@ const COMBINED_TIMESTAMP_NAMES = ['timestamp', 'datetime', 'date_time', 'utc'];
 const DATE_ONLY_NAMES = ['date'];
 const TIME_ONLY_NAMES = ['time'];
 
-// Parses CSV text into rows of string arrays, handling quoted fields
+// Auto-detects delimiter from the first line of text
+function detectDelimiter(text: string): string {
+	const firstLine = text.split(/\r?\n/)[0] || '';
+	// Count unquoted delimiters
+	let commas = 0, semicolons = 0, tabs = 0;
+	let inQuotes = false;
+	for (const ch of firstLine) {
+		if (ch === '"') inQuotes = !inQuotes;
+		if (inQuotes) continue;
+		if (ch === ',') commas++;
+		else if (ch === ';') semicolons++;
+		else if (ch === '\t') tabs++;
+	}
+	if (tabs > commas && tabs >= semicolons) return '\t';
+	if (semicolons > commas) return ';';
+	return ',';
+}
+
+// Parses CSV text into rows of string arrays, handling quoted fields and auto-detecting delimiter
 export function parseCsv(text: string): string[][] {
+	// Strip BOM
+	const cleaned = text.replace(/^\uFEFF/, '');
+	const delimiter = detectDelimiter(cleaned);
 	const rows: string[][] = [];
-	const lines = text.split(/\r?\n/);
+	const lines = cleaned.split(/\r?\n/);
 
 	for (const line of lines) {
 		if (!line.trim()) continue;
@@ -32,7 +53,7 @@ export function parseCsv(text: string): string[][] {
 				}
 			} else if (ch === '"') {
 				inQuotes = true;
-			} else if (ch === ',') {
+			} else if (ch === delimiter) {
 				fields.push(current.trim());
 				current = '';
 			} else {
@@ -61,7 +82,13 @@ export function detectColumns(headers: string[]): { lat: number; lng: number; la
 // Checks if a header row looks like column names (not numeric data)
 export function hasHeaderRow(firstRow: string[]): boolean {
 	const detected = detectColumns(firstRow);
-	return detected.lat !== -1 && detected.lng !== -1;
+	if (detected.lat !== -1 && detected.lng !== -1) return true;
+	// If any value in the first row is non-numeric text, treat it as a header
+	return firstRow.some(val => {
+		const trimmed = val.trim();
+		if (!trimmed) return false;
+		return isNaN(Number(trimmed));
+	});
 }
 
 // Auto-detects lat/lng columns by scanning data values when no header is present

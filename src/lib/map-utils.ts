@@ -1,6 +1,25 @@
 // DOM element factories for Google Maps markers, labels, and notes
 import type { Drawing } from './types';
 
+// Injects the timeline glow keyframes once into the document
+let glowStyleInjected = false;
+function ensureGlowStyle() {
+	if (glowStyleInjected || typeof document === 'undefined') return;
+	const style = document.createElement('style');
+	style.textContent = `
+		@keyframes timeline-glow {
+			0% { filter: brightness(1); }
+			100% { filter: brightness(1.3); }
+		}
+		@keyframes pin-fade-in {
+			0% { opacity: 0; transform: scale(0.5); }
+			100% { opacity: 1; transform: scale(1); }
+		}
+	`;
+	document.head.appendChild(style);
+	glowStyleInjected = true;
+}
+
 // Lightens a hex color by blending 45% toward white
 function brightenColor(hex: string): string {
 	const r = parseInt(hex.slice(1, 3), 16);
@@ -13,26 +32,32 @@ function brightenColor(hex: string): string {
 }
 
 // Creates a pin marker with number badge, label tooltip, and teardrop pointer
-export function createMarkerContent(index: number, selected: boolean, layerColor: string, label?: string, showLabel = false, labelOffset?: { x: number; y: number }, hideLabel = false, timestamp?: string): HTMLElement {
+export function createMarkerContent(index: number, selected: boolean, layerColor: string, label?: string, showLabel = false, labelOffset?: { x: number; y: number }, hideLabel = false, timestamp?: string, timeHighlight = false, fadeIn = false): HTMLElement {
+	if (timeHighlight || fadeIn) ensureGlowStyle();
 	const color = selected ? brightenColor(layerColor) : layerColor;
 	const wrapper = document.createElement('div');
 	wrapper.style.cssText = `
 		display: flex; flex-direction: column; align-items: center;
 		cursor: pointer; position: relative;
+		${fadeIn ? 'animation: pin-fade-in 0.4s ease-out;' : ''}
 	`;
 
 	const badge = document.createElement('div');
+	const glowShadow = timeHighlight
+		? `box-shadow: 0 0 0 5px ${layerColor}55, 0 0 18px 4px ${layerColor}66, 0 2px 12px rgba(0,0,0,0.5), inset 0 0 8px ${color}33; animation: timeline-glow 1.2s ease-in-out infinite alternate;`
+		: selected
+			? `box-shadow: 0 0 0 3px ${color}44, 0 2px 12px rgba(0,0,0,0.5), inset 0 0 8px ${color}33;`
+			: `box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 0 8px ${color}22;`;
 	badge.style.cssText = `
 		width: 30px; height: 30px; border-radius: 50%;
 		background: #0f172a; border: 2.5px solid ${color};
 		display: flex; align-items: center; justify-content: center;
 		font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
 		color: ${color};
-		box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 0 8px ${color}22;
-		${selected ? `box-shadow: 0 0 0 3px ${color}44, 0 2px 12px rgba(0,0,0,0.5), inset 0 0 8px ${color}33;` : ''}
+		${glowShadow}
 		transition: all 0.15s;
 		position: relative;
-		z-index: 2;
+		z-index: ${timeHighlight ? 10 : 2};
 	`;
 	badge.textContent = `${index + 1}`;
 	wrapper.appendChild(badge);

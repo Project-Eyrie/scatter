@@ -22,6 +22,27 @@
 	let selectedPin = $derived(pinStore.pins.find((p) => p.id === pinStore.selectedPinId));
 	let selectedDrawing = $derived(drawingStore.drawings.find((d) => d.id === drawingStore.selectedDrawingId));
 
+	// Crowd density levels (people per m²)
+	const CROWD_DENSITIES = [
+		{ label: 'Light', value: 0.5, desc: '~2m² per person' },
+		{ label: 'Moderate', value: 1.5, desc: 'shoulder to shoulder' },
+		{ label: 'Dense', value: 3, desc: 'packed crowd' },
+		{ label: 'Max', value: 5, desc: 'crush capacity' }
+	];
+	let crowdDensityIdx = $state(1);
+
+	function getAreaKm2(drawing: NonNullable<typeof selectedDrawing>): number | null {
+		if (drawing.type === 'polygon' && drawing.points.length >= 3) return polygonArea(drawing.points);
+		if (drawing.type === 'circle' && drawing.radius) return Math.PI * (drawing.radius / 1000) ** 2;
+		return null;
+	}
+
+	function formatCrowdCount(count: number): string {
+		if (count >= 1_000_000) return `~${(count / 1_000_000).toFixed(1)}M`;
+		if (count >= 1_000) return `~${(count / 1_000).toFixed(1)}K`;
+		return `~${Math.round(count)}`;
+	}
+
 	// Cleans up the street view panorama and its event listeners
 	function destroyPanorama() {
 		if (streetViewPanorama) {
@@ -401,6 +422,28 @@
 						<span class="prop-measure">{formatDistance(polylineLength(selectedDrawing.points))}</span>
 					</div>
 				{/if}
+				{#if getAreaKm2(selectedDrawing) !== null}
+					{@const areaKm2 = getAreaKm2(selectedDrawing)!}
+					{@const areaM2 = areaKm2 * 1_000_000}
+					{@const density = CROWD_DENSITIES[crowdDensityIdx]}
+					{@const count = areaM2 * density.value}
+					<div class="prop-field crowd-field">
+						<label class="prop-lbl">CROWD</label>
+						<div class="crowd-row">
+							<span class="prop-measure crowd-count">{formatCrowdCount(count)}</span>
+							<div class="crowd-density-btns">
+								{#each CROWD_DENSITIES as d, i}
+									<button
+										class="crowd-btn"
+										class:active={crowdDensityIdx === i}
+										onclick={() => crowdDensityIdx = i}
+										title="{d.desc}"
+									>{d.label}</button>
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/if}
 				{#if selectedDrawing.type !== 'note'}
 					<div class="prop-field">
 						<label class="prop-lbl">WIDTH</label>
@@ -431,6 +474,42 @@
 						{/each}
 					</select>
 				</div>
+				{#if selectedDrawing.type === 'path' || selectedDrawing.type === 'arrow'}
+				<div class="prop-field">
+					<label class="prop-lbl" for="prop-draw-start-ts">START TIME</label>
+					<input
+						id="prop-draw-start-ts"
+						type="datetime-local"
+						value={selectedDrawing.timestamp ? new Date(new Date(selectedDrawing.timestamp).getTime() - new Date(selectedDrawing.timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+						oninput={(e) => {
+							const val = (e.target as HTMLInputElement).value;
+							const startIso = val ? new Date(val).toISOString() : undefined;
+							const updates: Record<string, string | undefined> = { timestamp: startIso };
+							if (startIso && !selectedDrawing.endTimestamp && selectedDrawing.points.length >= 2) {
+								const dist = polylineLength(selectedDrawing.points);
+								const speedKmh = 40;
+								const durationMs = (dist / speedKmh) * 3600000;
+								updates.endTimestamp = new Date(new Date(val).getTime() + durationMs).toISOString();
+							}
+							drawingStore.updateDrawing(selectedDrawing.id, updates);
+						}}
+						class="prop-input"
+					/>
+				</div>
+				<div class="prop-field">
+					<label class="prop-lbl" for="prop-draw-end-ts">END TIME</label>
+					<input
+						id="prop-draw-end-ts"
+						type="datetime-local"
+						value={selectedDrawing.endTimestamp ? new Date(new Date(selectedDrawing.endTimestamp).getTime() - new Date(selectedDrawing.endTimestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+						oninput={(e) => {
+							const val = (e.target as HTMLInputElement).value;
+							drawingStore.updateDrawing(selectedDrawing.id, { endTimestamp: val ? new Date(val).toISOString() : undefined });
+						}}
+						class="prop-input"
+					/>
+				</div>
+			{:else}
 				<div class="prop-field">
 					<label class="prop-lbl" for="prop-draw-timestamp">TIMESTAMP</label>
 					<input
@@ -444,6 +523,7 @@
 						class="prop-input"
 					/>
 				</div>
+			{/if}
 			</div>
 		{:else}
 			<div class="props-empty">
@@ -818,6 +898,45 @@
 		color: #22d3ee;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+
+	.crowd-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.crowd-count {
+		min-width: 50px;
+	}
+
+	.crowd-density-btns {
+		display: flex;
+		gap: 2px;
+	}
+
+	.crowd-btn {
+		padding: 1px 5px;
+		font-size: 9px;
+		font-family: 'JetBrains Mono', monospace;
+		font-weight: 600;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 3px;
+		color: #94a3b8;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.crowd-btn:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: #e2e8f0;
+	}
+
+	.crowd-btn.active {
+		background: rgba(34, 211, 238, 0.15);
+		border-color: rgba(34, 211, 238, 0.4);
+		color: #22d3ee;
 	}
 
 	.prop-stroke-row {

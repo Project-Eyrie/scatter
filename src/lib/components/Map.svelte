@@ -39,14 +39,19 @@
 	let searchCircleShape: google.maps.Circle | null = null;
 	let drawingLabelMarkers: Map<string, CustomMarker> = new Map();
 	let pathAnimations: Map<string, number> = new Map();
+	let visiblePinIds: Set<string> = new Set();
+	let routeGeneration = 0;
 
 	let cursorLat = $state(0);
 	let cursorLng = $state(0);
 	let mapZoom = $state(3);
 
+	import type { DrawingPoint } from '$lib/types';
+
 	interface Props {
 		apiKey: string;
 		onRoutesCalculated?: (results: (RouteInfo | null)[][]) => void;
+		onRoutePathsUpdated?: (paths: DrawingPoint[][][]) => void;
 		routes?: RoutePair[];
 		notesVisible?: boolean;
 		labelsVisible?: boolean;
@@ -65,11 +70,14 @@
 		onDrawingFinish?: (radius?: number) => void;
 		clusterMaxZoom?: number;
 		routesVisible?: boolean;
+		timeFilter?: number | null;
+		timelineHiddenLayers?: Set<string>;
 	}
 
 	let {
 		apiKey,
 		onRoutesCalculated,
+		onRoutePathsUpdated,
 		routes = [],
 		notesVisible = true,
 		labelsVisible = true,
@@ -87,7 +95,9 @@
 		searchResults = [],
 		onDrawingFinish,
 		clusterMaxZoom = 14,
-		routesVisible = true
+		routesVisible = true,
+		timeFilter = null,
+		timelineHiddenLayers = new Set<string>()
 	}: Props = $props();
 
 	// Initializes the Google Maps instance, clusterer, and all event listeners
@@ -296,6 +306,83 @@
 		clusterer.setMaxZoom(clusterMaxZoom);
 	});
 
+	// Checks if an item is visible given the current timeline filter
+	function isTimeVisible(timestamp?: string, endTimestamp?: string): boolean {
+		if (timeFilter === null || timeFilter === undefined) return true;
+		if (!timestamp) return true;
+		const t = new Date(timestamp).getTime();
+		if (isNaN(t)) return true;
+		return t <= timeFilter;
+	}
+
+	// Computes the highlight window for timeline glow effect
+	let timeHighlightWindow = $derived.by(() => {
+		if (timeFilter === null || timeFilter === undefined) return 0;
+		const timestamps: number[] = [];
+		for (const p of pinStore.pins) {
+			if (p.timestamp) { const t = new Date(p.timestamp).getTime(); if (!isNaN(t)) timestamps.push(t); }
+		}
+		for (const d of drawingStore.drawings) {
+			if (d.timestamp) { const t = new Date(d.timestamp).getTime(); if (!isNaN(t)) timestamps.push(t); }
+			if (d.endTimestamp) { const t = new Date(d.endTimestamp).getTime(); if (!isNaN(t)) timestamps.push(t); }
+		}
+		if (timestamps.length < 2) return 0;
+		const range = Math.max(...timestamps) - Math.min(...timestamps);
+		return range > 0 ? range * 0.05 : 0;
+	});
+
+	// Computes a partial path for progressive reveal based on timeline position
+	function getProgressivePath(points: { lat: number; lng: number }[], timestamp?: string, endTimestamp?: string): { lat: number; lng: number }[] {
+		if (timeFilter === null || timeFilter === undefined) return points;
+		if (!timestamp || !endTimestamp || points.length < 2) return points;
+		const tStart = new Date(timestamp).getTime();
+		const tEnd = new Date(endTimestamp).getTime();
+		if (isNaN(tStart) || isNaN(tEnd) || tEnd <= tStart) return points;
+		if (timeFilter >= tEnd) return points;
+		if (timeFilter <= tStart) return [points[0]];
+
+		const progress = (timeFilter - tStart) / (tEnd - tStart);
+
+		const segLengths: number[] = [];
+		let totalLength = 0;
+		for (let i = 1; i < points.length; i++) {
+			const dlat = points[i].lat - points[i - 1].lat;
+			const dlng = (points[i].lng - points[i - 1].lng) * Math.cos(((points[i].lat + points[i - 1].lat) / 2) * Math.PI / 180);
+			const len = Math.sqrt(dlat * dlat + dlng * dlng);
+			segLengths.push(len);
+			totalLength += len;
+		}
+
+		const targetLength = totalLength * progress;
+		const result: { lat: number; lng: number }[] = [points[0]];
+		let accumulated = 0;
+
+		for (let i = 0; i < segLengths.length; i++) {
+			if (accumulated + segLengths[i] >= targetLength) {
+				const remaining = targetLength - accumulated;
+				const t = segLengths[i] > 0 ? remaining / segLengths[i] : 0;
+				result.push({
+					lat: points[i].lat + t * (points[i + 1].lat - points[i].lat),
+					lng: points[i].lng + t * (points[i + 1].lng - points[i].lng)
+				});
+				break;
+			}
+			accumulated += segLengths[i];
+			result.push(points[i + 1]);
+		}
+
+		return result;
+	}
+
+	// Checks if a pin's timestamp is near the current timeline position (for glow highlight)
+	function isTimeHighlighted(timestamp?: string): boolean {
+		if (timeFilter === null || timeFilter === undefined || !timeHighlightWindow) return false;
+		if (!timestamp) return false;
+		const t = new Date(timestamp).getTime();
+		if (isNaN(t)) return false;
+		return t <= timeFilter && t > timeFilter - timeHighlightWindow;
+	}
+
 	$effect(() => {
 		if (!ready || !map) return;
 
@@ -304,6 +391,7 @@
 		const showPinLabels = pinLabelsVisible;
 		const pinIds = new Set(currentPins.map((p) => p.id));
 		const layerMap = new Map(layerStore.layers.map((l) => [l.id, l]));
+		const tf = timeFilter;
 
 		for (const [id, marker] of markers) {
 			if (!pinIds.has(id)) {
@@ -326,18 +414,25 @@
 			)
 			: currentPins.map(() => ({ x: 0, y: 0 }));
 
+		const newVisiblePinIds = new Set<string>();
+
 		currentPins.forEach((pin, i) => {
 			const layer = layerMap.get(pin.layerId);
-			const visible = layer ? layer.visible : true;
+			const layerVisible = layer ? layer.visible : true;
+			const visible = layerVisible && isTimeVisible(pin.timestamp) && !timelineHiddenLayers.has(pin.layerId);
 			const layerColor = layer?.color ?? '#22d3ee';
 			const existing = markers.get(pin.id);
 			const offset = labelOffsets[i];
 
 			const formattedTimestamp = pin.timestamp ? formatTimestamp(pin.timestamp) : undefined;
+			const highlighted = isTimeHighlighted(pin.timestamp);
+			const fadeIn = visible && tf !== null && tf !== undefined && !visiblePinIds.has(pin.id);
+
+			if (visible) newVisiblePinIds.add(pin.id);
 
 			if (existing) {
 				existing.position = { lat: pin.lat, lng: pin.lng };
-				existing.content = createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp);
+				existing.content = createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn);
 				if (!visible && clusterer.hasMarker(existing)) {
 					clusterer.removeMarker(existing);
 				} else if (visible && !clusterer.hasMarker(existing)) {
@@ -346,7 +441,7 @@
 			} else {
 				const marker = new CustomMarker({
 					position: { lat: pin.lat, lng: pin.lng },
-					content: createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp),
+					content: createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn),
 					clickable: true
 				});
 				marker.addEventListener('click', () => {
@@ -358,6 +453,8 @@
 				}
 			}
 		});
+
+		visiblePinIds = newVisiblePinIds;
 	});
 
 	// Syncs drawing shapes and note markers with drawing store state
@@ -387,9 +484,12 @@
 
 		for (const drawing of currentDrawings) {
 			const layer = layerMap.get(drawing.layerId);
-			const visible = layer ? layer.visible : true;
+			const layerVisible = layer ? layer.visible : true;
+			const timeVis = isTimeVisible(drawing.timestamp, drawing.endTimestamp);
+			const visible = layerVisible && timeVis && !timelineHiddenLayers.has(drawing.layerId);
 			const drawColor = layer?.color ?? drawing.color;
 			const isSelected = drawing.id === selectedId;
+			const drawHighlighted = isTimeHighlighted(drawing.timestamp);
 
 			if (drawing.type === 'note') {
 				const noteVisible = visible && showNotes;
@@ -426,10 +526,26 @@
 
 			if (existing) {
 				existing.setMap(visible ? map : null);
-				applyDrawingStyle(existing, drawing, isSelected, drawColor);
+				applyDrawingStyle(existing, drawing, isSelected, drawColor, drawHighlighted);
+					if ((drawing.type === 'path' || drawing.type === 'arrow') && drawing.endTimestamp && existing instanceof google.maps.Polyline) {
+					const fullPath = drawing.points.map((p) => ({ lat: p.lat, lng: p.lng }));
+					const partialPath = getProgressivePath(
+						drawing.reversed && drawing.type === 'path' ? [...fullPath].reverse() : fullPath,
+						drawing.timestamp, drawing.endTimestamp
+					);
+					existing.setPath(partialPath);
+				}
 			} else {
-				const shape = createDrawingShape(drawing, isSelected, drawColor);
+				const shape = createDrawingShape(drawing, isSelected, drawColor, drawHighlighted);
 				if (shape) {
+						if ((drawing.type === 'path' || drawing.type === 'arrow') && drawing.endTimestamp && shape instanceof google.maps.Polyline) {
+						const fullPath = drawing.points.map((p) => ({ lat: p.lat, lng: p.lng }));
+						const partialPath = getProgressivePath(
+							drawing.reversed && drawing.type === 'path' ? [...fullPath].reverse() : fullPath,
+							drawing.timestamp, drawing.endTimestamp
+						);
+						shape.setPath(partialPath);
+					}
 					shape.setMap(visible ? map : null);
 					shape.addListener('click', () => {
 						drawingStore.selectedDrawingId = drawing.id;
@@ -445,22 +561,24 @@
 		shape: google.maps.Polyline | google.maps.Polygon | google.maps.Circle,
 		drawing: Drawing,
 		selected: boolean,
-		color: string
+		color: string,
+		highlighted = false
 	) {
 		const sw = drawing.strokeWidth ?? 2;
-		const selBonus = selected ? 1.5 : 0;
+		const hlBonus = highlighted ? 2 : 0;
+		const selBonus = (selected ? 1.5 : 0) + hlBonus;
 		if (shape instanceof google.maps.Circle) {
 			shape.setOptions({
 				strokeColor: color,
 				fillColor: color,
 				strokeWeight: sw + selBonus,
-				fillOpacity: selected ? 0.12 : 0.06
+				fillOpacity: highlighted ? 0.2 : selected ? 0.12 : 0.06
 			});
 		} else if (drawing.type === 'arrow' && shape instanceof google.maps.Polyline) {
 			shape.setOptions({
 				strokeColor: color,
 				strokeWeight: sw + selBonus,
-				strokeOpacity: selected ? 1 : 0.85,
+				strokeOpacity: highlighted ? 1 : selected ? 1 : 0.85,
 				icons: [
 					{
 						icon: {
@@ -476,8 +594,10 @@
 				]
 			});
 		} else if (drawing.type === 'path' && shape instanceof google.maps.Polyline) {
-			const drawPath = drawing.points.map((p) => ({ lat: p.lat, lng: p.lng }));
-			shape.setPath(drawing.reversed ? drawPath.reverse() : drawPath);
+				if (!drawing.endTimestamp || timeFilter === null || timeFilter === undefined) {
+				const drawPath = drawing.points.map((p) => ({ lat: p.lat, lng: p.lng }));
+				shape.setPath(drawing.reversed ? drawPath.reverse() : drawPath);
+			}
 			shape.setOptions({
 				strokeColor: color,
 				strokeWeight: 0,
@@ -514,11 +634,13 @@
 	function createDrawingShape(
 		drawing: Drawing,
 		selected: boolean,
-		color: string
+		color: string,
+		highlighted = false
 	): google.maps.Polyline | google.maps.Polygon | google.maps.Circle | null {
 		const path = drawing.points.map((p) => ({ lat: p.lat, lng: p.lng }));
 		const sw = drawing.strokeWidth ?? 2;
-		const selBonus = selected ? 1.5 : 0;
+		const hlBonus = highlighted ? 2 : 0;
+		const selBonus = (selected ? 1.5 : 0) + hlBonus;
 
 		if (drawing.type === 'arrow') {
 			return new google.maps.Polyline({
@@ -795,6 +917,7 @@
 		if (!ready || !map) return;
 
 		clearRoutePolylines();
+		const currentGen = ++routeGeneration;
 
 		const routeList = routes;
 		const mode = travelMode;
@@ -855,6 +978,9 @@
 		const results: (RouteInfo | null)[][] = routeList.map((r) =>
 			new Array(Math.max(0, r.waypointIds.length - 1)).fill(null)
 		);
+		const pathData: DrawingPoint[][][] = routeList.map((r) =>
+			new Array(Math.max(0, r.waypointIds.length - 1)).fill([])
+		);
 		let completed = 0;
 
 		for (const seg of allSegments) {
@@ -869,9 +995,11 @@
 						travelMode: mode,
 						fields: ['path', 'legs', 'localizedValues', 'distanceMeters', 'durationMillis']
 					});
+						if (routeGeneration !== currentGen) return;
 					if (routeResults?.length > 0) {
 						const route = routeResults[0];
 						const polylines = route.createPolylines();
+						const segPath: DrawingPoint[] = [];
 						for (const polyline of polylines) {
 							polyline.setOptions({
 								strokeColor: color,
@@ -880,8 +1008,13 @@
 								icons: []
 							});
 							polyline.setMap(map);
+							const path = polyline.getPath();
+							path.forEach((latLng: google.maps.LatLng) => {
+								segPath.push({ lat: latLng.lat(), lng: latLng.lng() });
+							});
 						}
 						routePolylines.push(...polylines);
+						pathData[seg.routeIdx][seg.segIdx] = segPath;
 
 						const leg = route.legs?.[0];
 						results[seg.routeIdx][seg.segIdx] = {
@@ -903,6 +1036,7 @@
 				completed++;
 				if (completed === allSegments.length) {
 					onRoutesCalculated?.(results);
+					onRoutePathsUpdated?.(pathData);
 				}
 			})();
 		}

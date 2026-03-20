@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Main application page orchestrating map, sidebar, toolbar, and bottom panel
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import Map from '$lib/components/Map.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import Header from '$lib/components/Header.svelte';
@@ -12,9 +12,9 @@
 	import { historyStore } from '$lib/history-store.svelte';
 	import { getShareUrl, decodeMapState, isEncryptedHash } from '$lib/url-state';
 	import { buildExportData, downloadJson, openImportDialog } from '$lib/json-export';
-	import { openCsvFileDialog, parseCsv, detectColumns, detectColumnsFromData, hasHeaderRow, validateCoords, getCsvStats, deduplicateRows, parseTimestamp, combineDateAndTime, exportCsv, MAX_CSV_PINS } from '$lib/csv-import';
+	import { openCsvFileDialog, parseCsv, detectColumns, detectColumnsFromData, hasHeaderRow, validateCoords, getCsvStats, deduplicateRows, parseTimestamp, combineDateAndTime, exportCsv, formatTimestamp, MAX_CSV_PINS } from '$lib/csv-import';
 	import { LAYER_COLORS, MAX_NOTE_TEXT_LENGTH } from '$lib/constants';
-	import type { RouteInfo, RoutePair, TravelMode, NearbyResult } from '$lib/types';
+	import type { RouteInfo, RoutePair, TravelMode, NearbyResult, DrawingPoint } from '$lib/types';
 
 	const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
@@ -23,6 +23,7 @@
 	let headerComponent: Header;
 	let routes = $state<RoutePair[]>([]);
 	let routeResults = $state<(RouteInfo | null)[][]>([]);
+	let routePaths = $state<DrawingPoint[][][]>([]);
 	let notesVisible = $state(true);
 	let travelMode = $state<TravelMode>('DRIVING');
 	let heatmapEnabled = $state(false);
@@ -77,6 +78,48 @@
 
 	let ctxMenu = $state({ show: false, x: 0, y: 0, lat: 0, lng: 0 });
 
+	let timelineActive = $state(false);
+	let timelinePlaying = $state(false);
+	let timelineTime = $state(0);
+	let timelineSpeed = $state(1);
+	let timelineAnimFrame = $state(0);
+	let timelineLayers = $state<Set<string>>(new Set());
+	let timelineLayerPickerOpen = $state(false);
+
+	// Collect all timestamps from pins and drawings
+	let allTimestamps = $derived.by(() => {
+		const ts: number[] = [];
+		for (const pin of pinStore.pins) {
+			if (pin.timestamp) {
+				const t = new Date(pin.timestamp).getTime();
+				if (!isNaN(t)) ts.push(t);
+			}
+		}
+		for (const d of drawingStore.drawings) {
+			if (d.timestamp) {
+				const t = new Date(d.timestamp).getTime();
+				if (!isNaN(t)) ts.push(t);
+			}
+			if (d.endTimestamp) {
+				const t = new Date(d.endTimestamp).getTime();
+				if (!isNaN(t)) ts.push(t);
+			}
+		}
+		return ts.sort((a, b) => a - b);
+	});
+	let timelineMin = $derived(allTimestamps.length > 0 ? allTimestamps[0] : 0);
+	let timelineMax = $derived(allTimestamps.length > 0 ? allTimestamps[allTimestamps.length - 1] : 0);
+	let hasTimestamps = $derived(allTimestamps.length > 0);
+	let timeFilter = $derived(timelineActive ? timelineTime : null);
+	let timelineHiddenLayers = $derived.by(() => {
+		if (!timelineActive || timelineLayers.size === 0) return new Set<string>();
+		const hidden = new Set<string>();
+		for (const l of layerStore.layers) {
+			if (!timelineLayers.has(l.id)) hidden.add(l.id);
+		}
+		return hidden;
+	});
+
 	let nearbyState = $state<{
 		phase: 'search' | 'results';
 		lat: number;
@@ -127,6 +170,42 @@
 			requestAnimationFrame(() => {
 				noteInputEl?.focus();
 			});
+		}
+	});
+
+	// Propagates timestamps from path/arrow drawings to their waypoint pins
+	$effect(() => {
+		const drawings = drawingStore.drawings;
+		for (const drawing of drawings) {
+			if (!drawing.waypointPinIds || !drawing.timestamp || !drawing.endTimestamp) continue;
+			if (drawing.waypointPinIds.length < 2) continue;
+
+			const tStart = new Date(drawing.timestamp).getTime();
+			const tEnd = new Date(drawing.endTimestamp).getTime();
+			if (isNaN(tStart) || isNaN(tEnd) || tEnd <= tStart) continue;
+
+			const pins = untrack(() => pinStore.pins);
+			const wpPins = drawing.waypointPinIds
+				.map(id => pins.find(p => p.id === id))
+				.filter((p): p is NonNullable<typeof p> => !!p);
+			if (wpPins.length < 2) continue;
+
+			const distances: number[] = [0];
+			let totalDist = 0;
+			for (let i = 1; i < wpPins.length; i++) {
+				const dlat = wpPins[i].lat - wpPins[i - 1].lat;
+				const dlng = (wpPins[i].lng - wpPins[i - 1].lng) * Math.cos(((wpPins[i].lat + wpPins[i - 1].lat) / 2) * Math.PI / 180);
+				totalDist += Math.sqrt(dlat * dlat + dlng * dlng);
+				distances.push(totalDist);
+			}
+
+			for (let i = 0; i < wpPins.length; i++) {
+				const fraction = totalDist > 0 ? distances[i] / totalDist : i / (wpPins.length - 1);
+				const pinTime = new Date(tStart + fraction * (tEnd - tStart)).toISOString();
+				if (wpPins[i].timestamp !== pinTime) {
+					pinStore.updatePin(wpPins[i].id, { timestamp: pinTime });
+				}
+			}
 		}
 	});
 
@@ -311,9 +390,15 @@
 			csvHeaders = allRows[0];
 			csvRows = allRows.slice(1);
 			const detected = detectColumns(csvHeaders);
-			csvLatCol = detected.lat;
-			csvLngCol = detected.lng;
 			csvLabelCol = detected.label;
+			if (detected.lat >= 0 && detected.lng >= 0) {
+				csvLatCol = detected.lat;
+				csvLngCol = detected.lng;
+			} else {
+					const fromData = detectColumnsFromData(csvRows);
+				csvLatCol = fromData.lat;
+				csvLngCol = fromData.lng;
+			}
 			if (detected.date >= 0 && detected.time >= 0) {
 				csvTimestampMode = 'separate';
 				csvDateCol = detected.date;
@@ -393,6 +478,110 @@
 		csvTimestampMode = 'combined';
 		csvDateCol = -1;
 		csvTimeCol = -1;
+	}
+
+	// Saves a calculated route as a drawing path
+	function handleSaveRouteAsPath(routeIndex: number) {
+		const route = routes[routeIndex];
+		if (!route) return;
+		historyStore.push();
+
+		const routeSegPaths = routePaths[routeIndex];
+		let pathPoints: DrawingPoint[] = [];
+
+		if (routeSegPaths && routeSegPaths.some(seg => seg.length > 0)) {
+			for (const seg of routeSegPaths) {
+				if (seg.length > 0) {
+						if (pathPoints.length > 0 && seg.length > 0) {
+						const last = pathPoints[pathPoints.length - 1];
+						const first = seg[0];
+						if (Math.abs(last.lat - first.lat) < 0.00001 && Math.abs(last.lng - first.lng) < 0.00001) {
+							pathPoints.push(...seg.slice(1));
+						} else {
+							pathPoints.push(...seg);
+						}
+					} else {
+						pathPoints.push(...seg);
+					}
+				}
+			}
+		}
+
+		if (pathPoints.length < 2) {
+			pathPoints = [];
+			for (const wpId of route.waypointIds) {
+				const pin = pinStore.pins.find(p => p.id === wpId);
+				if (pin) pathPoints.push({ lat: pin.lat, lng: pin.lng });
+			}
+		}
+
+		if (pathPoints.length < 2) return;
+
+		if (pathPoints.length > 200) {
+			const step = Math.ceil(pathPoints.length / 200);
+			const simplified = [pathPoints[0]];
+			for (let i = step; i < pathPoints.length - 1; i += step) {
+				simplified.push(pathPoints[i]);
+			}
+			simplified.push(pathPoints[pathPoints.length - 1]);
+			pathPoints = simplified;
+		}
+
+		const activeLayer = layerStore.layers.find(l => l.id === layerStore.activeLayerId);
+		const color = activeLayer?.color ?? '#22d3ee';
+
+		const drawing = {
+			id: `draw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+			type: 'path' as const,
+			points: pathPoints,
+			color,
+			strokeWidth: 2,
+			label: `Route ${routeIndex + 1}`,
+			layerId: layerStore.activeLayerId,
+			waypointPinIds: route.waypointIds
+		};
+		drawingStore.loadDrawings([...drawingStore.drawings, drawing]);
+
+		routes = routes.filter((_, i) => i !== routeIndex);
+	}
+
+	// Activates or deactivates the timeline scrubber
+	function toggleTimeline() {
+		if (!timelineActive) {
+			timelineActive = true;
+			timelineTime = timelineMin;
+			timelinePlaying = false;
+		} else {
+			timelineActive = false;
+			timelinePlaying = false;
+			if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame);
+		}
+	}
+
+	// Toggles timeline play/pause state
+	function toggleTimelinePlay() {
+		if (!timelineActive) return;
+		timelinePlaying = !timelinePlaying;
+		if (timelinePlaying) {
+			if (timelineTime >= timelineMax) timelineTime = timelineMin;
+			animateTimeline();
+		} else {
+			if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame);
+		}
+	}
+
+	// Advances timeline position each animation frame
+	function animateTimeline() {
+		if (!timelinePlaying || !timelineActive) return;
+		const range = timelineMax - timelineMin;
+		if (range <= 0) { timelinePlaying = false; return; }
+		const step = (range / (10000 / 16)) * timelineSpeed;
+		timelineTime = Math.min(timelineTime + step, timelineMax);
+		if (timelineTime >= timelineMax) {
+			timelinePlaying = false;
+		} else {
+			timelineAnimFrame = requestAnimationFrame(animateTimeline);
+		}
 	}
 
 	// Clears all pins and drawings after confirmation
@@ -556,7 +745,7 @@
 	}
 </script>
 
-<svelte:window onmousemove={onDrag} onmouseup={stopDrag} onkeydown={handleKeydown} onclick={() => { ctxMenu.show = false; labelsDropdownOpen = false; clusterDropdownOpen = false; }} />
+<svelte:window onmousemove={onDrag} onmouseup={stopDrag} onkeydown={handleKeydown} onclick={() => { ctxMenu.show = false; labelsDropdownOpen = false; clusterDropdownOpen = false; timelineLayerPickerOpen = false; }} />
 
 {#if splashVisible}
 	<div class="splash" class:splash-fade={splashFading}>
@@ -617,6 +806,7 @@
 				onLabelsVisibleChange={(v) => (labelsVisible = v)}
 				onTravelModeChange={(m) => (travelMode = m)}
 				onFlyTo={handleFlyTo}
+				onSaveRouteAsPath={handleSaveRouteAsPath}
 			/>
 		{/if}
 
@@ -637,6 +827,7 @@
 					{initialCenter}
 					{initialZoom}
 					onRoutesCalculated={(r) => (routeResults = r)}
+					onRoutePathsUpdated={(p) => (routePaths = p)}
 					onCursorMove={(lat, lng) => {
 						cursorLat = lat;
 						cursorLng = lng;
@@ -647,6 +838,8 @@
 					onDrawingFinish={handleDrawingFinish}
 					{clusterMaxZoom}
 					{routesVisible}
+					{timeFilter}
+					{timelineHiddenLayers}
 				/>
 
 				<div class="controls-top">
@@ -765,6 +958,82 @@
 							<path stroke-linecap="round" stroke-linejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
 						</svg>
 						<span>Right-click to add pins</span>
+					</div>
+				{/if}
+
+				{#if hasTimestamps}
+					<div class="timeline-bar">
+						<button class="timeline-toggle" onclick={toggleTimeline} title={timelineActive ? 'Close timeline' : 'Open timeline'}>
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+							</svg>
+						</button>
+						{#if timelineActive}
+							<button class="timeline-play" onclick={toggleTimelinePlay} title={timelinePlaying ? 'Pause' : 'Play'}>
+								{#if timelinePlaying}
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+										<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+									</svg>
+								{:else}
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+										<path d="M8 5v14l11-7z" />
+									</svg>
+								{/if}
+							</button>
+							<input
+								type="range"
+								class="timeline-scrubber"
+								min={timelineMin}
+								max={timelineMax}
+								step={1000}
+								bind:value={timelineTime}
+								oninput={() => { timelinePlaying = false; if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame); }}
+							/>
+							<span class="timeline-time">{timelineTime ? formatTimestamp(new Date(timelineTime).toISOString()) : ''}</span>
+							<select class="timeline-speed" bind:value={timelineSpeed} title="Playback speed">
+								<option value={0.5}>0.5x</option>
+								<option value={1}>1x</option>
+								<option value={2}>2x</option>
+								<option value={5}>5x</option>
+								<option value={10}>10x</option>
+							</select>
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="tl-layer-picker" onclick={(e) => e.stopPropagation()}>
+								<button
+									class="tl-layer-btn"
+									class:active={timelineLayers.size > 0}
+									onclick={() => timelineLayerPickerOpen = !timelineLayerPickerOpen}
+									title="Filter layers"
+								>
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-9.75 5.25m7.321-2.25l4.179 2.25-4.179 2.25m0 0L12 17.25l-5.571-3m11.142 0l4.179 2.25L12 21.75l-9.75-5.25 4.179-2.25" />
+									</svg>
+								</button>
+								{#if timelineLayerPickerOpen}
+									<div class="tl-layer-dropdown">
+										{#each layerStore.layers as layer}
+											<label class="tl-layer-option">
+												<input
+													type="checkbox"
+													checked={timelineLayers.has(layer.id)}
+													onchange={() => {
+														const next = new Set(timelineLayers);
+														if (next.has(layer.id)) next.delete(layer.id);
+														else next.add(layer.id);
+														timelineLayers = next;
+													}}
+												/>
+												<span class="tl-layer-dot" style="background: {layer.color};"></span>
+												<span class="tl-layer-name">{layer.name}</span>
+											</label>
+										{/each}
+										{#if timelineLayers.size > 0}
+											<button class="tl-layer-clear" onclick={() => timelineLayers = new Set()}>Show all</button>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -1663,6 +1932,212 @@
 	@keyframes hint-fade {
 		from { opacity: 0; transform: translateX(-50%) translateY(8px); }
 		to { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+
+	.timeline-bar {
+		position: absolute;
+		bottom: 10px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 5px 10px;
+		border-radius: 8px;
+		background: rgba(10, 15, 26, 0.92);
+		backdrop-filter: blur(12px);
+		border: 1px solid #1e293b;
+		z-index: 20;
+		font-family: var(--font-mono);
+		max-width: 80%;
+	}
+
+	.timeline-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: 1px solid #334155;
+		background: transparent;
+		color: #94a3b8;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.timeline-toggle:hover {
+		color: #f59e0b;
+		border-color: #f59e0b;
+	}
+
+	.timeline-play {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: 1px solid #f59e0b;
+		background: rgba(245, 158, 11, 0.1);
+		color: #f59e0b;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.timeline-play:hover {
+		background: rgba(245, 158, 11, 0.2);
+	}
+
+	.timeline-scrubber {
+		flex: 1;
+		min-width: 200px;
+		height: 4px;
+		-webkit-appearance: none;
+		appearance: none;
+		background: #1e293b;
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	.timeline-scrubber::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #f59e0b;
+		border: 2px solid #0a0f1a;
+		cursor: pointer;
+	}
+
+	.timeline-scrubber::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: #f59e0b;
+		border: 2px solid #0a0f1a;
+		cursor: pointer;
+	}
+
+	.timeline-time {
+		font-size: 9px;
+		color: #94a3b8;
+		white-space: nowrap;
+		min-width: 110px;
+		text-align: center;
+	}
+
+	.timeline-speed {
+		padding: 2px 4px;
+		border-radius: 4px;
+		border: 1px solid #1e293b;
+		background: #111827;
+		color: #94a3b8;
+		font-size: 9px;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		outline: none;
+	}
+
+	.tl-layer-picker {
+		position: relative;
+	}
+
+	.tl-layer-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: 1px solid #334155;
+		background: transparent;
+		color: #94a3b8;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.tl-layer-btn:hover {
+		color: #22d3ee;
+		border-color: #22d3ee;
+	}
+
+	.tl-layer-btn.active {
+		color: #22d3ee;
+		border-color: #22d3ee;
+		background: rgba(34, 211, 238, 0.1);
+	}
+
+	.tl-layer-dropdown {
+		position: absolute;
+		bottom: 100%;
+		right: 0;
+		margin-bottom: 6px;
+		padding: 6px;
+		border-radius: 6px;
+		background: rgba(10, 15, 26, 0.95);
+		backdrop-filter: blur(12px);
+		border: 1px solid #1e293b;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 130px;
+		z-index: 30;
+	}
+
+	.tl-layer-option {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 4px;
+		border-radius: 3px;
+		cursor: pointer;
+		font-size: 10px;
+		color: #cbd5e1;
+		white-space: nowrap;
+	}
+
+	.tl-layer-option:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.tl-layer-option input[type="checkbox"] {
+		width: 12px;
+		height: 12px;
+		accent-color: #22d3ee;
+		cursor: pointer;
+	}
+
+	.tl-layer-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.tl-layer-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 100px;
+	}
+
+	.tl-layer-clear {
+		padding: 3px 6px;
+		border-radius: 3px;
+		border: 1px solid #1e293b;
+		background: transparent;
+		color: #64748b;
+		font-size: 9px;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		text-align: center;
+		margin-top: 2px;
+	}
+
+	.tl-layer-clear:hover {
+		color: #e2e8f0;
+		border-color: #334155;
 	}
 
 	.divider {

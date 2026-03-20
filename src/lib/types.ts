@@ -41,6 +41,8 @@ export interface Drawing {
 	animated?: boolean;
 	reversed?: boolean;
 	timestamp?: string;
+	endTimestamp?: string;
+	waypointPinIds?: string[];
 }
 
 export interface Layer {
