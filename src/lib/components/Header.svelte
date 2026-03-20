@@ -10,6 +10,7 @@
 		onImport: () => void;
 		onImportCsv: () => void;
 		onExportCsv: () => void;
+		onExportImage: () => void;
 		onClearAll: () => void;
 		onUndo: () => void;
 		onRedo: () => void;
@@ -27,6 +28,7 @@
 		onImport,
 		onImportCsv,
 		onExportCsv,
+		onExportImage,
 		onClearAll,
 		onUndo,
 		onRedo,
@@ -106,6 +108,9 @@
 						</button>
 						<button class="menu-option" onclick={() => { closeMenus(); onExportCsv(); }}>
 							<span class="menu-option-label">Export CSV</span>
+						</button>
+						<button class="menu-option" onclick={() => { closeMenus(); onExportImage(); }} title="Captures overlays only — map tiles may not render due to cross-origin restrictions">
+							<span class="menu-option-label">Export Image</span>
 						</button>
 					</div>
 				{/if}

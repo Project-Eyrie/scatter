@@ -1,5 +1,6 @@
 // DOM element factories for Google Maps markers, labels, and notes
 import type { Drawing } from './types';
+import { PIN_ICONS } from './constants';
 
 // Injects the timeline glow keyframes once into the document
 let glowStyleInjected = false;
@@ -32,7 +33,7 @@ function brightenColor(hex: string): string {
 }
 
 // Creates a pin marker with number badge, label tooltip, and teardrop pointer
-export function createMarkerContent(index: number, selected: boolean, layerColor: string, label?: string, showLabel = false, labelOffset?: { x: number; y: number }, hideLabel = false, timestamp?: string, timeHighlight = false, fadeIn = false): HTMLElement {
+export function createMarkerContent(index: number, selected: boolean, layerColor: string, label?: string, showLabel = false, labelOffset?: { x: number; y: number }, hideLabel = false, timestamp?: string, timeHighlight = false, fadeIn = false, icon?: string): HTMLElement {
 	if (timeHighlight || fadeIn) ensureGlowStyle();
 	const color = selected ? brightenColor(layerColor) : layerColor;
 	const wrapper = document.createElement('div');
@@ -59,7 +60,24 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 		position: relative;
 		z-index: ${timeHighlight ? 10 : 2};
 	`;
-	badge.textContent = `${index + 1}`;
+	const iconDef = icon ? PIN_ICONS[icon] : undefined;
+	if (iconDef) {
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('width', '16');
+		svg.setAttribute('height', '16');
+		svg.setAttribute('fill', iconDef.fill ? color : 'none');
+		svg.setAttribute('stroke', color);
+		svg.setAttribute('stroke-width', '2');
+		svg.setAttribute('stroke-linecap', 'round');
+		svg.setAttribute('stroke-linejoin', 'round');
+		const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		pathEl.setAttribute('d', iconDef.path);
+		svg.appendChild(pathEl);
+		badge.appendChild(svg);
+	} else {
+		badge.textContent = `${index + 1}`;
+	}
 	wrapper.appendChild(badge);
 
 	const pointer = document.createElement('div');
@@ -352,7 +370,7 @@ export function computePinLabelOffsets(
 ): Array<{ x: number; y: number }> {
 	const LABEL_W = 80;
 	const LABEL_H = 18;
-	const LABEL_Y_OFFSET = -26; // default position above pin
+	const LABEL_Y_OFFSET = -26;
 	const MIN_GAP = 4;
 	const lngScale = Math.pow(2, zoom) * 256 / 360;
 

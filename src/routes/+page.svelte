@@ -44,6 +44,8 @@
 	let initialZoom = $state<number | undefined>(undefined);
 	let splashVisible = $state(true);
 	let splashFading = $state(false);
+	let embedMode = $state(false);
+	let readonlyMode = $state(false);
 
 	let showNoteModal = $state(false);
 	let noteText = $state('');
@@ -57,6 +59,8 @@
 	let showShareModal = $state(false);
 	let sharePassword = $state('');
 	let sharePasswordInputEl = $state<HTMLInputElement | null>(null);
+	let shareEmbed = $state(false);
+	let shareReadonly = $state(false);
 
 	let showDecryptModal = $state(false);
 	let decryptPassword = $state('');
@@ -85,6 +89,7 @@
 	let timelineAnimFrame = $state(0);
 	let timelineLayers = $state<Set<string>>(new Set());
 	let timelineLayerPickerOpen = $state(false);
+	let filteredPinIds = $state<Set<string> | null>(null);
 
 	// Collect all timestamps from pins and drawings
 	let allTimestamps = $derived.by(() => {
@@ -211,7 +216,7 @@
 
 	// Confirms the note text and places it on the map
 	function confirmNote() {
-		historyStore.push();
+		historyStore.push('Added note');
 		drawingStore.finishDrawing(undefined, noteText || 'Note');
 		showNoteModal = false;
 		noteText = '';
@@ -229,6 +234,10 @@
 	let splitContainer: HTMLDivElement;
 
 	onMount(async () => {
+		const urlParams = new URLSearchParams(window.location.search);
+		if (urlParams.get('embed') === 'true') embedMode = true;
+		if (urlParams.get('readonly') === 'true') readonlyMode = true;
+
 		const hash = window.location.hash;
 		if (hash.startsWith('#s=')) {
 			const hashData = hash.slice(3);
@@ -252,15 +261,21 @@
 						pinLabelsVisible = result.viewSettings.pinLabelsVisible;
 						poiLabelsVisible = result.viewSettings.poiLabelsVisible;
 						routesVisible = result.viewSettings.routesVisible;
+						if (result.viewSettings.embedMode) embedMode = true;
+						if (result.viewSettings.readonlyMode) readonlyMode = true;
 					}
 				}
 			}
 		}
 
-		setTimeout(() => {
-			splashFading = true;
-			setTimeout(() => { splashVisible = false; }, 500);
-		}, 1400);
+		if (embedMode) {
+			splashVisible = false;
+		} else {
+			setTimeout(() => {
+				splashFading = true;
+				setTimeout(() => { splashVisible = false; }, 500);
+			}, 1400);
+		}
 	});
 
 	// Initiates the vertical panel divider drag
@@ -295,6 +310,8 @@
 	// Opens the share modal for optional password encryption
 	function handleShare() {
 		sharePassword = '';
+		shareEmbed = false;
+		shareReadonly = false;
 		showShareModal = true;
 		requestAnimationFrame(() => sharePasswordInputEl?.focus());
 	}
@@ -304,7 +321,7 @@
 		const center = mapComponent?.getCenter();
 		const zoom = mapComponent?.getZoom();
 		const password = withPassword && sharePassword ? sharePassword : undefined;
-		const url = await getShareUrl(center, zoom, routes, travelMode, { labelsVisible, notesVisible, heatmapEnabled, isSatellite, tiltEnabled, pinLabelsVisible, poiLabelsVisible, routesVisible }, password);
+		const url = await getShareUrl(center, zoom, routes, travelMode, { labelsVisible, notesVisible, heatmapEnabled, isSatellite, tiltEnabled, pinLabelsVisible, poiLabelsVisible, routesVisible, embedMode: shareEmbed, readonlyMode: shareReadonly }, password);
 		navigator.clipboard.writeText(url);
 		showShareModal = false;
 		sharePassword = '';
@@ -332,6 +349,8 @@
 			pinLabelsVisible = result.viewSettings.pinLabelsVisible;
 			poiLabelsVisible = result.viewSettings.poiLabelsVisible;
 			routesVisible = result.viewSettings.routesVisible;
+			if (result.viewSettings.embedMode) embedMode = true;
+			if (result.viewSettings.readonlyMode) readonlyMode = true;
 		}
 		if (result.center && result.zoom) {
 			mapComponent?.setView(result.center, result.zoom);
@@ -428,7 +447,7 @@
 	// Imports the mapped CSV rows as pins, deduplicating first
 	function confirmCsvImport() {
 		if (csvLatCol < 0 || csvLngCol < 0) return;
-		historyStore.push();
+		historyStore.push('Imported CSV');
 		const uniqueRows = deduplicateRows(csvRows, csvLatCol, csvLngCol);
 		const addedPoints: { lat: number; lng: number }[] = [];
 
@@ -484,7 +503,7 @@
 	function handleSaveRouteAsPath(routeIndex: number) {
 		const route = routes[routeIndex];
 		if (!route) return;
-		historyStore.push();
+		historyStore.push('Saved route as path');
 
 		const routeSegPaths = routePaths[routeIndex];
 		let pathPoints: DrawingPoint[] = [];
@@ -588,7 +607,7 @@
 	function handleClearAll() {
 		if (pinStore.pins.length === 0 && drawingStore.drawings.length === 0) return;
 		if (!confirm('Clear all pins and drawings?')) return;
-		historyStore.push();
+		historyStore.push('Cleared all');
 		pinStore.clearAll();
 		drawingStore.clearAll();
 	}
@@ -605,6 +624,7 @@
 
 	// Handles Delete/Backspace to remove and Ctrl+Z/Y for undo/redo
 	function handleKeydown(e: KeyboardEvent) {
+		if (readonlyMode || embedMode) return;
 		const tag = (e.target as HTMLElement)?.tagName;
 		const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
@@ -625,11 +645,11 @@
 			if (isInput) return;
 
 			if (pinStore.selectedPinId) {
-				historyStore.push();
+				historyStore.push('Removed pin');
 				pinStore.removePin(pinStore.selectedPinId);
 				pinStore.selectedPinId = null;
 			} else if (drawingStore.selectedDrawingId) {
-				historyStore.push();
+				historyStore.push('Removed drawing');
 				drawingStore.removeDrawing(drawingStore.selectedDrawingId);
 				drawingStore.selectedDrawingId = null;
 			}
@@ -691,7 +711,7 @@
 	// Creates pins from selected search results in the chosen layer
 	function keepSelectedResults() {
 		if (!nearbyState) return;
-		historyStore.push();
+		historyStore.push('Added nearby results');
 		const layerId = nearbyState.targetLayerId;
 		for (const result of nearbyState.results) {
 			if (nearbyState.selected.has(result.id)) {
@@ -729,7 +749,7 @@
 
 	// Confirms the drawing label and completes the drawing
 	function confirmDrawingLabel() {
-		historyStore.push();
+		historyStore.push('Finished drawing');
 		drawingStore.finishDrawing(pendingDrawingRadius, undefined, drawingLabelText.trim() || undefined);
 		showDrawingLabelModal = false;
 		drawingLabelText = '';
@@ -774,27 +794,30 @@
 	</div>
 </div>
 
-<div class="app">
-	<Header
-		bind:this={headerComponent}
-		onToggleSidebar={handleToggleSidebar}
-		{sidebarOpen}
-		onShare={handleShare}
-		onExport={handleExport}
-		onImport={handleImport}
-		onImportCsv={handleImportCsv}
-		onExportCsv={handleExportCsv}
-		onClearAll={handleClearAll}
-		onUndo={() => historyStore.undo()}
-		onRedo={() => historyStore.redo()}
-		canUndo={historyStore.canUndo}
-		canRedo={historyStore.canRedo}
-		{cursorLat}
-		{cursorLng}
-	/>
+<div class="app" class:embed={embedMode}>
+	{#if !embedMode}
+		<Header
+			bind:this={headerComponent}
+			onToggleSidebar={handleToggleSidebar}
+			{sidebarOpen}
+			onShare={handleShare}
+			onExport={handleExport}
+			onImport={handleImport}
+			onImportCsv={handleImportCsv}
+			onExportCsv={handleExportCsv}
+			onExportImage={() => mapComponent?.exportImage()}
+			onClearAll={handleClearAll}
+			onUndo={() => historyStore.undo()}
+			onRedo={() => historyStore.redo()}
+			canUndo={historyStore.canUndo}
+			canRedo={historyStore.canRedo}
+			{cursorLat}
+			{cursorLng}
+		/>
+	{/if}
 
 	<div class="body">
-		{#if sidebarOpen}
+		{#if sidebarOpen && !embedMode}
 			<Sidebar
 				{routes}
 				{routeResults}
@@ -807,11 +830,12 @@
 				onTravelModeChange={(m) => (travelMode = m)}
 				onFlyTo={handleFlyTo}
 				onSaveRouteAsPath={handleSaveRouteAsPath}
+				onFilteredPinIds={(ids) => filteredPinIds = ids}
 			/>
 		{/if}
 
 		<div class="main-col" bind:this={splitContainer}>
-			<div class="map-section" style="flex: {splitRatio};">
+			<div class="map-section" style="flex: {embedMode ? 1 : splitRatio};">
 				<Map
 					bind:this={mapComponent}
 					{apiKey}
@@ -832,7 +856,7 @@
 						cursorLat = lat;
 						cursorLng = lng;
 					}}
-					onContextMenu={handleContextMenu}
+					onContextMenu={readonlyMode || embedMode ? undefined : handleContextMenu}
 					{searchCircle}
 					searchResults={searchResultsForMap}
 					onDrawingFinish={handleDrawingFinish}
@@ -840,8 +864,10 @@
 					{routesVisible}
 					{timeFilter}
 					{timelineHiddenLayers}
+					hiddenPinIds={filteredPinIds}
 				/>
 
+				{#if !embedMode}
 				<div class="controls-top">
 					<div class="controls-left">
 						<button
@@ -941,10 +967,96 @@
 								</svg>
 							</button>
 						{/if}
+						{#if hasTimestamps}
+							<button
+								class="ctrl-btn"
+								class:active={timelineActive}
+								onclick={toggleTimeline}
+								title={timelineActive ? 'Close timeline' : 'Open timeline'}
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+								</svg>
+							</button>
+							{#if timelineActive}
+								<div class="timeline-panel">
+									<div class="timeline-row">
+										<button class="timeline-play" onclick={toggleTimelinePlay} title={timelinePlaying ? 'Pause' : 'Play'}>
+											{#if timelinePlaying}
+												<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+													<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+												</svg>
+											{:else}
+												<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+													<path d="M8 5v14l11-7z" />
+												</svg>
+											{/if}
+										</button>
+										<select class="timeline-speed" bind:value={timelineSpeed} title="Playback speed">
+											<option value={0.25}>0.25x</option>
+											<option value={0.5}>0.5x</option>
+											<option value={1}>1x</option>
+											<option value={2}>2x</option>
+											<option value={5}>5x</option>
+											<option value={10}>10x</option>
+										</select>
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div class="tl-layer-picker" onclick={(e) => e.stopPropagation()}>
+											<button
+												class="tl-layer-btn"
+												class:active={timelineLayers.size > 0}
+												onclick={() => timelineLayerPickerOpen = !timelineLayerPickerOpen}
+												title="Filter layers"
+											>
+												<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+													<path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-9.75 5.25m7.321-2.25l4.179 2.25-4.179 2.25m0 0L12 17.25l-5.571-3m11.142 0l4.179 2.25L12 21.75l-9.75-5.25 4.179-2.25" />
+												</svg>
+											</button>
+											{#if timelineLayerPickerOpen}
+												<div class="tl-layer-dropdown">
+													{#each layerStore.layers as layer}
+														<label class="tl-layer-option">
+															<input
+																type="checkbox"
+																checked={timelineLayers.has(layer.id)}
+																onchange={() => {
+																	const next = new Set(timelineLayers);
+																	if (next.has(layer.id)) next.delete(layer.id);
+																	else next.add(layer.id);
+																	timelineLayers = next;
+																}}
+															/>
+															<span class="tl-layer-dot" style="background: {layer.color};"></span>
+															<span class="tl-layer-name">{layer.name}</span>
+														</label>
+													{/each}
+													{#if timelineLayers.size > 0}
+														<button class="tl-layer-clear" onclick={() => timelineLayers = new Set()}>Show all</button>
+													{/if}
+												</div>
+											{/if}
+										</div>
+									</div>
+									<input
+										type="range"
+										class="timeline-scrubber"
+										min={timelineMin}
+										max={timelineMax}
+										step={1000}
+										bind:value={timelineTime}
+										oninput={() => { timelinePlaying = false; if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame); }}
+									/>
+									<span class="timeline-time">{timelineTime ? formatTimestamp(new Date(timelineTime).toISOString()) : ''}</span>
+								</div>
+							{/if}
+						{/if}
 					</div>
 
-					<DrawingToolbar onFinish={handleDrawingFinish} />
+					{#if !readonlyMode}
+						<DrawingToolbar onFinish={handleDrawingFinish} />
+					{/if}
 				</div>
+			{/if}
 
 				{#if drawingStore.mode !== 'none'}
 					<div class="mode-badge">
@@ -952,7 +1064,7 @@
 					</div>
 				{/if}
 
-				{#if pinStore.pins.length === 0 && drawingStore.mode === 'none' && !nearbyState}
+				{#if pinStore.pins.length === 0 && drawingStore.mode === 'none' && !nearbyState && !embedMode && !readonlyMode}
 					<div class="map-hint">
 						<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
@@ -961,82 +1073,7 @@
 					</div>
 				{/if}
 
-				{#if hasTimestamps}
-					<div class="timeline-bar">
-						<button class="timeline-toggle" onclick={toggleTimeline} title={timelineActive ? 'Close timeline' : 'Open timeline'}>
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-							</svg>
-						</button>
-						{#if timelineActive}
-							<button class="timeline-play" onclick={toggleTimelinePlay} title={timelinePlaying ? 'Pause' : 'Play'}>
-								{#if timelinePlaying}
-									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
-										<path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-									</svg>
-								{:else}
-									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
-										<path d="M8 5v14l11-7z" />
-									</svg>
-								{/if}
-							</button>
-							<input
-								type="range"
-								class="timeline-scrubber"
-								min={timelineMin}
-								max={timelineMax}
-								step={1000}
-								bind:value={timelineTime}
-								oninput={() => { timelinePlaying = false; if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame); }}
-							/>
-							<span class="timeline-time">{timelineTime ? formatTimestamp(new Date(timelineTime).toISOString()) : ''}</span>
-							<select class="timeline-speed" bind:value={timelineSpeed} title="Playback speed">
-								<option value={0.5}>0.5x</option>
-								<option value={1}>1x</option>
-								<option value={2}>2x</option>
-								<option value={5}>5x</option>
-								<option value={10}>10x</option>
-							</select>
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<div class="tl-layer-picker" onclick={(e) => e.stopPropagation()}>
-								<button
-									class="tl-layer-btn"
-									class:active={timelineLayers.size > 0}
-									onclick={() => timelineLayerPickerOpen = !timelineLayerPickerOpen}
-									title="Filter layers"
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-9.75 5.25m7.321-2.25l4.179 2.25-4.179 2.25m0 0L12 17.25l-5.571-3m11.142 0l4.179 2.25L12 21.75l-9.75-5.25 4.179-2.25" />
-									</svg>
-								</button>
-								{#if timelineLayerPickerOpen}
-									<div class="tl-layer-dropdown">
-										{#each layerStore.layers as layer}
-											<label class="tl-layer-option">
-												<input
-													type="checkbox"
-													checked={timelineLayers.has(layer.id)}
-													onchange={() => {
-														const next = new Set(timelineLayers);
-														if (next.has(layer.id)) next.delete(layer.id);
-														else next.add(layer.id);
-														timelineLayers = next;
-													}}
-												/>
-												<span class="tl-layer-dot" style="background: {layer.color};"></span>
-												<span class="tl-layer-name">{layer.name}</span>
-											</label>
-										{/each}
-										{#if timelineLayers.size > 0}
-											<button class="tl-layer-clear" onclick={() => timelineLayers = new Set()}>Show all</button>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				{/if}
-
+	
 				{#if nearbyState}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div class="nearby-panel" onkeydown={(e) => { if (e.key === 'Escape') closeNearbySearch(); }}>
@@ -1145,20 +1182,22 @@
 				{/if}
 			</div>
 
-			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-			<div
-				class="divider"
-				class:dragging={isDragging}
-				onmousedown={startDrag}
-				role="separator"
-				aria-label="Resize panels"
-			>
-				<div class="divider-grip"></div>
-			</div>
+			{#if !embedMode}
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<div
+					class="divider"
+					class:dragging={isDragging}
+					onmousedown={startDrag}
+					role="separator"
+					aria-label="Resize panels"
+				>
+					<div class="divider-grip"></div>
+				</div>
 
-			<div class="bottom-section" style="flex: {1 - splitRatio};">
-				<BottomPanel bind:this={bottomPanelComponent} onFlyTo={handleFlyTo} />
-			</div>
+				<div class="bottom-section" style="flex: {1 - splitRatio};">
+					<BottomPanel bind:this={bottomPanelComponent} onFlyTo={handleFlyTo} />
+				</div>
+			{/if}
 		</div>
 	</div>
 
@@ -1275,6 +1314,16 @@
 						bind:value={sharePassword}
 						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmShare(!!sharePassword); } }}
 					/>
+					<div class="share-options">
+						<label class="share-check">
+							<input type="checkbox" bind:checked={shareReadonly} />
+							<span>Read-only</span>
+						</label>
+						<label class="share-check">
+							<input type="checkbox" bind:checked={shareEmbed} />
+							<span>Embed mode</span>
+						</label>
+					</div>
 				</div>
 				<div class="modal-footer">
 					<button class="modal-btn cancel" onclick={() => confirmShare(false)}>Share without password</button>
@@ -1378,6 +1427,7 @@
 				</div>
 				<div class="modal-body">
 					<div class="csv-mapping">
+						<div class="csv-section-label">Column Mapping</div>
 						<div class="csv-field">
 							<label class="csv-label">Latitude</label>
 							<select class="csv-select" bind:value={csvLatCol}>
@@ -1395,7 +1445,7 @@
 							</select>
 						</div>
 						<div class="csv-field">
-							<label class="csv-label">Label <span class="csv-optional">(optional)</span></label>
+							<label class="csv-label">Label <span class="csv-optional">optional</span></label>
 							<select class="csv-select" bind:value={csvLabelCol}>
 								<option value={-1}>None</option>
 								{#each csvHeaders as header, i}
@@ -1403,15 +1453,16 @@
 								{/each}
 							</select>
 						</div>
+						<div class="csv-divider"></div>
 						<div class="csv-field">
-							<label class="csv-label">Timestamp <span class="csv-optional">(optional)</span></label>
+							<label class="csv-label">Timestamp <span class="csv-optional">optional</span></label>
 							<div class="csv-timestamp-toggle">
 								<button class="csv-toggle-btn" class:active={csvTimestampMode === 'combined'} onclick={() => { csvTimestampMode = 'combined'; csvDateCol = -1; csvTimeCol = -1; }}>Combined</button>
 								<button class="csv-toggle-btn" class:active={csvTimestampMode === 'separate'} onclick={() => { csvTimestampMode = 'separate'; csvTimestampCol = -1; }}>Date + Time</button>
 							</div>
 						</div>
 						{#if csvTimestampMode === 'combined'}
-						<div class="csv-field">
+						<div class="csv-field csv-sub-field">
 							<label class="csv-label csv-label-indent">Column</label>
 							<select class="csv-select" bind:value={csvTimestampCol}>
 								<option value={-1}>None</option>
@@ -1421,7 +1472,7 @@
 							</select>
 						</div>
 						{:else}
-						<div class="csv-field">
+						<div class="csv-field csv-sub-field">
 							<label class="csv-label csv-label-indent">Date</label>
 							<select class="csv-select" bind:value={csvDateCol}>
 								<option value={-1}>None</option>
@@ -1430,7 +1481,7 @@
 								{/each}
 							</select>
 						</div>
-						<div class="csv-field">
+						<div class="csv-field csv-sub-field">
 							<label class="csv-label csv-label-indent">Time</label>
 							<select class="csv-select" bind:value={csvTimeCol}>
 								<option value={-1}>None</option>
@@ -1934,22 +1985,23 @@
 		to { opacity: 1; transform: translateX(-50%) translateY(0); }
 	}
 
-	.timeline-bar {
-		position: absolute;
-		bottom: 10px;
-		left: 50%;
-		transform: translateX(-50%);
+	.timeline-panel {
 		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 5px 10px;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px;
 		border-radius: 8px;
 		background: rgba(10, 15, 26, 0.92);
 		backdrop-filter: blur(12px);
 		border: 1px solid #1e293b;
-		z-index: 20;
 		font-family: var(--font-mono);
-		max-width: 80%;
+		width: 180px;
+	}
+
+	.timeline-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.timeline-toggle {
@@ -1990,8 +2042,7 @@
 	}
 
 	.timeline-scrubber {
-		flex: 1;
-		min-width: 200px;
+		width: 100%;
 		height: 4px;
 		-webkit-appearance: none;
 		appearance: none;
@@ -2024,8 +2075,7 @@
 		font-size: 9px;
 		color: #94a3b8;
 		white-space: nowrap;
-		min-width: 110px;
-		text-align: center;
+		text-align: left;
 	}
 
 	.timeline-speed {
@@ -2187,11 +2237,11 @@
 	}
 
 	.modal {
-		width: 340px;
+		width: 360px;
 		background: #0f172a;
 		border: 1px solid #1e293b;
 		border-radius: 12px;
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03);
 		overflow: hidden;
 	}
 
@@ -2199,8 +2249,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 12px 16px;
+		padding: 14px 18px;
 		border-bottom: 1px solid #1e293b;
+		background: rgba(255, 255, 255, 0.01);
 	}
 
 	.modal-title {
@@ -2222,25 +2273,26 @@
 		border: none;
 		color: #475569;
 		cursor: pointer;
+		transition: all 0.12s;
 	}
 
 	.modal-close:hover {
 		color: #e2e8f0;
-		background: rgba(255, 255, 255, 0.05);
+		background: rgba(255, 255, 255, 0.06);
 	}
 
 	.modal-body {
-		padding: 16px;
+		padding: 18px;
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
+		gap: 14px;
 	}
 
 	.modal-textarea {
 		width: 100%;
 		padding: 10px 12px;
 		border-radius: 8px;
-		border: 1px solid #334155;
+		border: 1px solid #1e293b;
 		background: #0a0f1a;
 		color: #e2e8f0;
 		font-family: var(--font-mono);
@@ -2248,6 +2300,7 @@
 		line-height: 1.5;
 		resize: vertical;
 		outline: none;
+		transition: border-color 0.12s;
 	}
 
 	.modal-textarea:focus {
@@ -2262,12 +2315,13 @@
 		display: flex;
 		justify-content: flex-end;
 		gap: 8px;
-		padding: 12px 16px;
+		padding: 14px 18px;
 		border-top: 1px solid #1e293b;
+		background: rgba(255, 255, 255, 0.01);
 	}
 
 	.modal-btn {
-		padding: 7px 16px;
+		padding: 8px 18px;
 		border-radius: 6px;
 		border: none;
 		cursor: pointer;
@@ -2286,6 +2340,7 @@
 	.modal-btn.cancel:hover {
 		color: #e2e8f0;
 		border-color: #334155;
+		background: rgba(255, 255, 255, 0.03);
 	}
 
 	.modal-btn.confirm {
@@ -2303,19 +2358,20 @@
 	}
 
 	.csv-modal {
-		width: 420px;
+		width: 440px;
 	}
 
 	.csv-mapping {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 12px;
 	}
 
 	.csv-field {
-		display: flex;
+		display: grid;
+		grid-template-columns: 90px 1fr;
 		align-items: center;
-		gap: 8px;
+		gap: 12px;
 	}
 
 	.csv-label {
@@ -2323,25 +2379,28 @@
 		font-size: 10px;
 		font-weight: 600;
 		color: #94a3b8;
-		letter-spacing: 0.04em;
-		min-width: 80px;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
 	}
 
 	.csv-optional {
 		color: #475569;
 		font-weight: 400;
+		text-transform: none;
+		font-size: 9px;
 	}
 
 	.csv-select {
 		flex: 1;
-		padding: 5px 8px;
+		padding: 7px 10px;
 		border-radius: 6px;
-		border: 1px solid #334155;
+		border: 1px solid #1e293b;
 		background: #0a0f1a;
 		color: #e2e8f0;
 		font-family: var(--font-mono);
 		font-size: 11px;
 		outline: none;
+		transition: border-color 0.12s;
 	}
 
 	.csv-select:focus {
@@ -2350,7 +2409,7 @@
 
 	.csv-preview {
 		border: 1px solid #1e293b;
-		border-radius: 6px;
+		border-radius: 8px;
 		overflow: hidden;
 	}
 
@@ -2362,18 +2421,18 @@
 	}
 
 	.csv-table th {
-		padding: 5px 8px;
+		padding: 6px 10px;
 		text-align: left;
 		color: #475569;
 		font-weight: 600;
-		letter-spacing: 0.05em;
+		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		background: rgba(255, 255, 255, 0.02);
 		border-bottom: 1px solid #1e293b;
 	}
 
 	.csv-table td {
-		padding: 4px 8px;
+		padding: 5px 10px;
 		color: #94a3b8;
 		border-bottom: 1px solid rgba(30, 41, 59, 0.5);
 		max-width: 120px;
@@ -2388,7 +2447,7 @@
 	}
 
 	.csv-more {
-		padding: 4px 8px;
+		padding: 5px 10px;
 		font-family: var(--font-mono);
 		font-size: 10px;
 		color: #475569;
@@ -2398,6 +2457,7 @@
 	.csv-status {
 		font-family: var(--font-mono);
 		font-size: 10px;
+		padding: 2px 0;
 	}
 
 	.csv-ok {
@@ -2420,8 +2480,8 @@
 
 	.csv-toggle-btn {
 		flex: 1;
-		padding: 4px 8px;
-		border: 1px solid #334155;
+		padding: 6px 10px;
+		border: 1px solid #1e293b;
 		background: transparent;
 		color: #64748b;
 		font-family: var(--font-mono);
@@ -2451,19 +2511,42 @@
 		background: rgba(255, 255, 255, 0.03);
 	}
 
+	.csv-section-label {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #475569;
+		margin-bottom: 2px;
+	}
+
+	.csv-divider {
+		height: 1px;
+		background: #1e293b;
+		margin: 4px 0;
+	}
+
+	.csv-sub-field {
+		padding-left: 12px;
+		border-left: 2px solid #1e293b;
+		margin-left: 4px;
+	}
+
 	.csv-label-indent {
-		padding-left: 8px;
+		padding-left: 0;
+		color: #64748b;
 	}
 
 	.csv-walkthrough-modal {
-		width: 400px;
+		width: 420px;
 	}
 
 	.walkthrough-desc {
 		font-family: var(--font-mono);
 		font-size: 11px;
 		color: #94a3b8;
-		line-height: 1.6;
+		line-height: 1.7;
 	}
 
 	.walkthrough-desc strong {
@@ -2479,9 +2562,9 @@
 
 	.walkthrough-col {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 6px 10px;
+		flex-direction: column;
+		gap: 2px;
+		padding: 8px 12px;
 		border-radius: 6px;
 		border: 1px solid #1e293b;
 		background: rgba(255, 255, 255, 0.02);
@@ -2494,7 +2577,7 @@
 
 	.walkthrough-col-name {
 		font-family: var(--font-mono);
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 600;
 		color: #e2e8f0;
 	}
@@ -2503,6 +2586,7 @@
 		font-family: var(--font-mono);
 		font-size: 9px;
 		color: #475569;
+		line-height: 1.3;
 	}
 
 	.walkthrough-col.required .walkthrough-col-info {
@@ -2629,12 +2713,13 @@
 		width: 100%;
 		padding: 8px 10px;
 		border-radius: 6px;
-		border: 1px solid #334155;
+		border: 1px solid #1e293b;
 		background: #0a0f1a;
 		color: #e2e8f0;
 		font-family: var(--font-mono);
 		font-size: 11px;
 		outline: none;
+		transition: border-color 0.12s;
 	}
 
 	.nearby-input:focus {
@@ -2875,9 +2960,37 @@
 
 	.share-hint {
 		font-family: var(--font-mono);
-		font-size: 10px;
+		font-size: 11px;
 		color: #64748b;
-		line-height: 1.5;
+		line-height: 1.6;
+	}
+
+	.share-options {
+		display: flex;
+		gap: 18px;
+		padding: 8px 10px;
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid #1e293b;
+		border-radius: 6px;
+	}
+
+	.share-check {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: #94a3b8;
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.share-check:hover {
+		color: #e2e8f0;
+	}
+
+	.share-check input[type="checkbox"] {
+		accent-color: #22d3ee;
 	}
 
 	.decrypt-error {

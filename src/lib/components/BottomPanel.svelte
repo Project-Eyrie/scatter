@@ -5,7 +5,8 @@
 	import { drawingStore } from '$lib/drawing-store.svelte';
 	import { layerStore } from '$lib/layer-store.svelte';
 	import { haversineDistance, formatDistance, polygonArea, formatArea, polylineLength } from '$lib/geo';
-	import { MAX_PIN_LABEL_LENGTH, STROKE_WIDTH_OPTIONS, DRAW_ICON_PATHS } from '$lib/constants';
+	import { historyStore } from '$lib/history-store.svelte';
+	import { MAX_PIN_LABEL_LENGTH, STROKE_WIDTH_OPTIONS, DRAW_ICON_PATHS, PIN_ICONS } from '$lib/constants';
 
 	interface Props {
 		onFlyTo: (lat: number, lng: number) => void;
@@ -13,7 +14,7 @@
 
 	let { onFlyTo }: Props = $props();
 
-	let activeTab = $state<'matrix' | 'streetview' | 'travel'>('matrix');
+	let activeTab = $state<'matrix' | 'streetview' | 'travel' | 'history'>('matrix');
 	let streetViewEl: HTMLDivElement;
 	let streetViewPanorama: google.maps.StreetViewPanorama | null = null;
 	let lastStreetViewPinId: string | null = null;
@@ -22,7 +23,6 @@
 	let selectedPin = $derived(pinStore.pins.find((p) => p.id === pinStore.selectedPinId));
 	let selectedDrawing = $derived(drawingStore.drawings.find((d) => d.id === drawingStore.selectedDrawingId));
 
-	// Crowd density levels (people per m²)
 	const CROWD_DENSITIES = [
 		{ label: 'Light', value: 0.5, desc: '~2m² per person' },
 		{ label: 'Moderate', value: 1.5, desc: 'shoulder to shoulder' },
@@ -155,6 +155,10 @@
 				class="tab" class:active={activeTab === 'travel'}
 				onclick={() => (activeTab = 'travel')}
 			>TRAVEL</button>
+			<button
+				class="tab" class:active={activeTab === 'history'}
+				onclick={() => (activeTab = 'history')}
+			>HISTORY{historyStore.undoEntries.length > 0 ? ` (${historyStore.undoEntries.length})` : ''}</button>
 			{#if activeTab === 'matrix' && pinStore.pins.length >= 2}
 				<span class="tab-count">{pinStore.pins.length} pins · straight-line</span>
 			{/if}
@@ -245,6 +249,47 @@
 			{:else}
 				<div class="panel-empty">
 					<span>Select a pin to view street view</span>
+				</div>
+			{/if}
+		</div>
+
+		<div class="tab-content" class:hidden={activeTab !== 'history'}>
+			{#if historyStore.undoEntries.length === 0 && historyStore.redoEntries.length === 0}
+				<div class="panel-empty">
+					<span>No history yet</span>
+				</div>
+			{:else}
+				<div class="history-scroll">
+					{#each historyStore.redoEntries.toReversed() as entry, i}
+						<button
+							class="history-entry redo"
+							onclick={() => {
+								const redoIdx = historyStore.redoEntries.length - 1 - i;
+								for (let r = 0; r <= redoIdx; r++) historyStore.redo();
+							}}
+						>
+							<span class="history-dot redo-dot"></span>
+							<span class="history-desc">{entry.description}</span>
+							<span class="history-time">{new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+						</button>
+					{/each}
+					<div class="history-current">
+						<span class="history-dot current-dot"></span>
+						<span class="history-desc">Current state</span>
+					</div>
+					{#each historyStore.undoEntries.toReversed() as entry, i}
+						<button
+							class="history-entry undo"
+							onclick={() => {
+								const targetIdx = historyStore.undoEntries.length - 1 - i;
+								historyStore.jumpTo(targetIdx);
+							}}
+						>
+							<span class="history-dot undo-dot"></span>
+							<span class="history-desc">{entry.description}</span>
+							<span class="history-time">{new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+						</button>
+					{/each}
 				</div>
 			{/if}
 		</div>
@@ -371,6 +416,23 @@
 						class="prop-input"
 					/>
 				</div>
+				<div class="prop-field">
+					<label class="prop-lbl">ICON</label>
+					<div class="icon-picker">
+						{#each Object.keys(PIN_ICONS) as iconName}
+							<button
+								class="icon-btn"
+								class:active={selectedPin.icon === iconName}
+								title={iconName}
+								onclick={() => pinStore.updatePin(selectedPin.id, { icon: selectedPin.icon === iconName ? undefined : iconName })}
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={PIN_ICONS[iconName].fill ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5">
+									<path d={PIN_ICONS[iconName].path} />
+								</svg>
+							</button>
+						{/each}
+					</div>
+				</div>
 			</div>
 		{:else if selectedDrawing}
 			{@const drawLayer = layerStore.layers.find((l) => l.id === selectedDrawing.layerId)}
@@ -474,57 +536,7 @@
 						{/each}
 					</select>
 				</div>
-				{#if selectedDrawing.type === 'path' || selectedDrawing.type === 'arrow'}
-				<div class="prop-field">
-					<label class="prop-lbl" for="prop-draw-start-ts">START TIME</label>
-					<input
-						id="prop-draw-start-ts"
-						type="datetime-local"
-						value={selectedDrawing.timestamp ? new Date(new Date(selectedDrawing.timestamp).getTime() - new Date(selectedDrawing.timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
-						oninput={(e) => {
-							const val = (e.target as HTMLInputElement).value;
-							const startIso = val ? new Date(val).toISOString() : undefined;
-							const updates: Record<string, string | undefined> = { timestamp: startIso };
-							if (startIso && !selectedDrawing.endTimestamp && selectedDrawing.points.length >= 2) {
-								const dist = polylineLength(selectedDrawing.points);
-								const speedKmh = 40;
-								const durationMs = (dist / speedKmh) * 3600000;
-								updates.endTimestamp = new Date(new Date(val).getTime() + durationMs).toISOString();
-							}
-							drawingStore.updateDrawing(selectedDrawing.id, updates);
-						}}
-						class="prop-input"
-					/>
 				</div>
-				<div class="prop-field">
-					<label class="prop-lbl" for="prop-draw-end-ts">END TIME</label>
-					<input
-						id="prop-draw-end-ts"
-						type="datetime-local"
-						value={selectedDrawing.endTimestamp ? new Date(new Date(selectedDrawing.endTimestamp).getTime() - new Date(selectedDrawing.endTimestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
-						oninput={(e) => {
-							const val = (e.target as HTMLInputElement).value;
-							drawingStore.updateDrawing(selectedDrawing.id, { endTimestamp: val ? new Date(val).toISOString() : undefined });
-						}}
-						class="prop-input"
-					/>
-				</div>
-			{:else}
-				<div class="prop-field">
-					<label class="prop-lbl" for="prop-draw-timestamp">TIMESTAMP</label>
-					<input
-						id="prop-draw-timestamp"
-						type="datetime-local"
-						value={selectedDrawing.timestamp ? new Date(new Date(selectedDrawing.timestamp).getTime() - new Date(selectedDrawing.timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
-						oninput={(e) => {
-							const val = (e.target as HTMLInputElement).value;
-							drawingStore.updateDrawing(selectedDrawing.id, { timestamp: val ? new Date(val).toISOString() : undefined });
-						}}
-						class="prop-input"
-					/>
-				</div>
-			{/if}
-			</div>
 		{:else}
 			<div class="props-empty">
 				<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 props-empty-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
@@ -1118,5 +1130,115 @@
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 		flex-shrink: 0;
+	}
+
+	.history-scroll {
+		flex: 1;
+		overflow-y: auto;
+		padding: 4px 0;
+	}
+
+	.history-entry {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 5px 12px;
+		background: none;
+		border: none;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		transition: background 0.1s;
+		text-align: left;
+	}
+
+	.history-entry:hover {
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.history-current {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 5px 12px;
+		border-top: 1px solid #1e293b;
+		border-bottom: 1px solid #1e293b;
+		background: rgba(34, 211, 238, 0.04);
+	}
+
+	.history-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.undo-dot {
+		background: #475569;
+	}
+
+	.redo-dot {
+		background: rgba(245, 158, 11, 0.5);
+	}
+
+	.current-dot {
+		background: #22d3ee;
+	}
+
+	.history-desc {
+		flex: 1;
+		font-size: 10px;
+		color: #94a3b8;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.history-current .history-desc {
+		color: #22d3ee;
+		font-weight: 600;
+	}
+
+	.history-entry.redo .history-desc {
+		color: #64748b;
+		font-style: italic;
+	}
+
+	.history-time {
+		font-size: 8px;
+		color: #334155;
+		flex-shrink: 0;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.icon-picker {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px;
+	}
+
+	.icon-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		border-radius: 3px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.05);
+		color: #94a3b8;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.icon-btn:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: #e2e8f0;
+	}
+
+	.icon-btn.active {
+		background: rgba(34, 211, 238, 0.15);
+		border-color: rgba(34, 211, 238, 0.4);
+		color: #22d3ee;
 	}
 </style>

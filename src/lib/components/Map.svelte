@@ -72,6 +72,7 @@
 		routesVisible?: boolean;
 		timeFilter?: number | null;
 		timelineHiddenLayers?: Set<string>;
+		hiddenPinIds?: Set<string> | null;
 	}
 
 	let {
@@ -97,7 +98,8 @@
 		clusterMaxZoom = 14,
 		routesVisible = true,
 		timeFilter = null,
-		timelineHiddenLayers = new Set<string>()
+		timelineHiddenLayers = new Set<string>(),
+		hiddenPinIds = null as Set<string> | null
 	}: Props = $props();
 
 	// Initializes the Google Maps instance, clusterer, and all event listeners
@@ -169,7 +171,7 @@
 					if (onDrawingFinish) {
 						onDrawingFinish(radius);
 					} else {
-						historyStore.push();
+						historyStore.push('Finished drawing');
 						drawingStore.finishDrawing(radius);
 					}
 					lastDrawFinishTime = Date.now();
@@ -200,7 +202,7 @@
 			if (onContextMenu) {
 				onContextMenu(lat, lng, e.clientX, e.clientY);
 			} else {
-				historyStore.push();
+				historyStore.push('Added pin');
 				const pin = pinStore.addPin(lat, lng);
 				reverseGeocode(pin.id, lat, lng);
 			}
@@ -212,12 +214,12 @@
 				e.stop();
 				drawingStore.undoLastPoint();
 				if (mode === 'measure') {
-					historyStore.push();
+					historyStore.push('Finished measurement');
 					drawingStore.finishDrawing();
 				} else if (onDrawingFinish) {
 					onDrawingFinish();
 				} else {
-					historyStore.push();
+					historyStore.push('Finished drawing');
 					drawingStore.finishDrawing();
 				}
 				lastDrawFinishTime = Date.now();
@@ -300,10 +302,11 @@
 		}
 	}
 
-	// Syncs map markers with pin store state
+	// Updates the clusterer's max zoom threshold when the setting changes
 	$effect(() => {
+		const maxZ = clusterMaxZoom;
 		if (!clusterer) return;
-		clusterer.setMaxZoom(clusterMaxZoom);
+		clusterer.setMaxZoom(maxZ);
 	});
 
 	// Checks if an item is visible given the current timeline filter
@@ -383,6 +386,7 @@
 		return t <= timeFilter && t > timeFilter - timeHighlightWindow;
 	}
 
+	// Syncs map markers with pin store, layer visibility, and timeline state
 	$effect(() => {
 		if (!ready || !map) return;
 
@@ -419,7 +423,7 @@
 		currentPins.forEach((pin, i) => {
 			const layer = layerMap.get(pin.layerId);
 			const layerVisible = layer ? layer.visible : true;
-			const visible = layerVisible && isTimeVisible(pin.timestamp) && !timelineHiddenLayers.has(pin.layerId);
+			const visible = layerVisible && isTimeVisible(pin.timestamp) && !timelineHiddenLayers.has(pin.layerId) && (!hiddenPinIds || hiddenPinIds.has(pin.id));
 			const layerColor = layer?.color ?? '#22d3ee';
 			const existing = markers.get(pin.id);
 			const offset = labelOffsets[i];
@@ -432,24 +436,27 @@
 
 			if (existing) {
 				existing.position = { lat: pin.lat, lng: pin.lng };
-				existing.content = createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn);
+				existing.content = createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn, pin.icon);
 				if (!visible && clusterer.hasMarker(existing)) {
 					clusterer.removeMarker(existing);
 				} else if (visible && !clusterer.hasMarker(existing)) {
 					clusterer.addMarker(existing);
+					clusterer.setMarkerMeta(existing, { layerColor, layerName: layer?.name ?? 'Default', timestamp: pin.timestamp });
 				}
 			} else {
 				const marker = new CustomMarker({
 					position: { lat: pin.lat, lng: pin.lng },
-					content: createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn),
+					content: createMarkerContent(i, pin.id === selected, layerColor, pin.label, showPinLabels, offset, hideLabel, formattedTimestamp, highlighted, fadeIn, pin.icon),
 					clickable: true
 				});
 				marker.addEventListener('click', () => {
+					lastMarkerClickTime = Date.now();
 					pinStore.selectedPinId = pin.id;
 				});
 				markers.set(pin.id, marker);
 				if (visible) {
 					clusterer.addMarker(marker);
+					clusterer.setMarkerMeta(marker, { layerColor, layerName: layer?.name ?? 'Default', timestamp: pin.timestamp });
 				}
 			}
 		});
@@ -548,6 +555,7 @@
 					}
 					shape.setMap(visible ? map : null);
 					shape.addListener('click', () => {
+						lastMarkerClickTime = Date.now();
 						drawingStore.selectedDrawingId = drawing.id;
 					});
 					drawingShapes.set(drawing.id, shape);
@@ -868,6 +876,7 @@
 		if (drawingStore.mode !== 'measure' || drawingStore.currentPoints.length < 2) return;
 
 		const pts = drawingStore.currentPoints;
+		let totalDist = 0;
 		for (let i = 1; i < pts.length; i++) {
 			const a = pts[i - 1];
 			const b = pts[i];
@@ -877,6 +886,7 @@
 				new google.maps.LatLng(a.lat, a.lng),
 				new google.maps.LatLng(b.lat, b.lng)
 			);
+			totalDist += dist;
 
 			const label = dist < 1000 ? `${Math.round(dist)} m` : `${(dist / 1000).toFixed(2)} km`;
 
@@ -898,6 +908,23 @@
 			});
 			measureMarkers.push(marker);
 		}
+
+		const totalEl = document.createElement('div');
+		totalEl.style.cssText = `
+			padding: 3px 8px; border-radius: 4px;
+			background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(245, 158, 11, 0.4);
+			color: #f59e0b; font-family: 'JetBrains Mono', monospace;
+			font-size: 12px; font-weight: 700; white-space: nowrap;
+			pointer-events: none;
+		`;
+		totalEl.textContent = totalDist < 1000 ? `Total: ${Math.round(totalDist)} m` : `Total: ${(totalDist / 1000).toFixed(2)} km`;
+		const totalMarker = new CustomMarker({
+			position: { lat: pts[pts.length - 1].lat, lng: pts[pts.length - 1].lng },
+			content: totalEl,
+			map,
+			anchor: 'center'
+		});
+		measureMarkers.push(totalMarker);
 	});
 
 	// Removes all route polylines and straight-line overlays from the map
@@ -1260,7 +1287,7 @@
 
 	// Adds a pin at given coordinates with reverse geocoding
 	export function addPinAt(lat: number, lng: number) {
-		historyStore.push();
+		historyStore.push('Added pin');
 		const pin = pinStore.addPin(lat, lng);
 		reverseGeocode(pin.id, lat, lng);
 	}
@@ -1341,6 +1368,17 @@
 			map.setCenter(center);
 			map.setZoom(zoom);
 		}
+	}
+
+	// Captures the map container as a PNG image and triggers a download
+	export async function exportImage() {
+		if (!mapEl) return;
+		const html2canvas = (await import('html2canvas')).default;
+		const canvas = await html2canvas(mapEl, { useCORS: true, allowTaint: true });
+		const link = document.createElement('a');
+		link.download = `scatter-export-${Date.now()}.png`;
+		link.href = canvas.toDataURL('image/png');
+		link.click();
 	}
 
 	// Sets the map type (roadmap or satellite)

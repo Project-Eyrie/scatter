@@ -1,5 +1,4 @@
 // Custom OverlayView-based marker using composition so it can be imported before the Google Maps API loads
-
 export class CustomMarker {
 	private overlay: google.maps.OverlayView;
 	private _position: google.maps.LatLngLiteral;

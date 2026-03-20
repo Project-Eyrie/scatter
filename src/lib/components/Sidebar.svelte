@@ -6,7 +6,7 @@
 	import { historyStore } from '$lib/history-store.svelte';
 	import { haversineDistance, formatDistance, formatDuration, polygonArea, formatArea, polylineLength } from '$lib/geo';
 	import SearchBar from './SearchBar.svelte';
-	import { LAYER_COLORS, ROUTE_COLORS, DRAW_ICON_PATHS, STROKE_WIDTH_OPTIONS } from '$lib/constants';
+	import { LAYER_COLORS, ROUTE_COLORS, DRAW_ICON_PATHS, STROKE_WIDTH_OPTIONS, PIN_ICONS } from '$lib/constants';
 	import { formatTimestamp } from '$lib/csv-import';
 	import type { RouteInfo, RoutePair, TravelMode } from '$lib/types';
 
@@ -22,6 +22,7 @@
 		onTravelModeChange: (mode: TravelMode) => void;
 		onFlyTo: (lat: number, lng: number) => void;
 		onSaveRouteAsPath: (routeIndex: number) => void;
+		onFilteredPinIds?: (ids: Set<string> | null) => void;
 	}
 
 	let {
@@ -35,7 +36,8 @@
 		onLabelsVisibleChange,
 		onTravelModeChange,
 		onFlyTo,
-		onSaveRouteAsPath
+		onSaveRouteAsPath,
+		onFilteredPinIds
 	}: Props = $props();
 
 	// Creates a new route between the first two pins
@@ -130,17 +132,35 @@
 	}
 
 	let pinSearch = $state('');
+	let filterOpen = $state(false);
+	let filterLayerId = $state<string | null>(null);
+	let filterTimestamp = $state<'all' | 'with' | 'without'>('all');
 
-	// Filters pins by search query matching label or coordinates
+	// Filters pins by search query, layer, and timestamp status
 	let filteredPins = $derived(
-		pinSearch.trim() === ''
-			? pinStore.pins
-			: pinStore.pins.filter((p) => {
+		pinStore.pins.filter((p) => {
+			if (filterLayerId && p.layerId !== filterLayerId) return false;
+			if (filterTimestamp === 'with' && !p.timestamp) return false;
+			if (filterTimestamp === 'without' && p.timestamp) return false;
+			if (pinSearch.trim() !== '') {
 				const q = pinSearch.toLowerCase();
-				return p.label.toLowerCase().includes(q)
-					|| `${p.lat},${p.lng}`.includes(q);
-			})
+				if (!p.label.toLowerCase().includes(q) && !`${p.lat},${p.lng}`.includes(q)) return false;
+			}
+			return true;
+		})
 	);
+
+	let hasActiveFilters = $derived(filterLayerId !== null || filterTimestamp !== 'all');
+
+	// Emits filtered pin IDs to parent when filters are active
+	$effect(() => {
+		if (!onFilteredPinIds) return;
+		if (!hasActiveFilters && pinSearch.trim() === '') {
+			onFilteredPinIds(null);
+		} else {
+			onFilteredPinIds(new Set(filteredPins.map(p => p.id)));
+		}
+	});
 </script>
 
 <aside class="sidebar">
@@ -276,7 +296,7 @@
 				{#if pinStore.pins.length > 0}
 					<div class="content-header">
 						<span class="counter">{pinStore.pins.length} PIN{pinStore.pins.length !== 1 ? 'S' : ''}</span>
-						<button class="text-btn danger" onclick={() => { historyStore.push(); pinStore.clearAll(); }}>Clear</button>
+						<button class="text-btn danger" onclick={() => { historyStore.push('Cleared all pins'); pinStore.clearAll(); }}>Clear</button>
 					</div>
 					<div class="pin-search-row">
 						<svg xmlns="http://www.w3.org/2000/svg" class="pin-search-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -295,7 +315,38 @@
 								</svg>
 							</button>
 						{/if}
+						<button class="pin-filter-btn" class:active={hasActiveFilters} onclick={() => filterOpen = !filterOpen} title="Filter options">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+							</svg>
+						</button>
 					</div>
+					{#if filterOpen}
+						<div class="pin-filter-panel">
+							<div class="pin-filter-field">
+								<span class="pin-filter-lbl">LAYER</span>
+								<select class="pin-filter-select" bind:value={filterLayerId}>
+									<option value={null}>All layers</option>
+									{#each layerStore.layers as layer}
+										<option value={layer.id}>
+											{layer.name}
+										</option>
+									{/each}
+								</select>
+							</div>
+							<div class="pin-filter-field">
+								<span class="pin-filter-lbl">TIMESTAMP</span>
+								<div class="pin-filter-radios">
+									<label class="pin-filter-radio"><input type="radio" bind:group={filterTimestamp} value="all" /> All</label>
+									<label class="pin-filter-radio"><input type="radio" bind:group={filterTimestamp} value="with" /> With</label>
+									<label class="pin-filter-radio"><input type="radio" bind:group={filterTimestamp} value="without" /> Without</label>
+								</div>
+							</div>
+							{#if hasActiveFilters}
+								<button class="pin-filter-clear-btn" onclick={() => { filterLayerId = null; filterTimestamp = 'all'; }}>Clear filters</button>
+							{/if}
+						</div>
+					{/if}
 				{/if}
 
 				{#if pinStore.pins.length === 0}
@@ -320,7 +371,13 @@
 							onkeydown={(e) => { if (e.key === 'Enter') { pinStore.selectedPinId = pin.id; onFlyTo(pin.lat, pin.lng); } }}
 						>
 							<div class="card-row">
-								<span class="badge" style="border-color: {pinLayer?.color ?? '#22d3ee'}; color: {pinLayer?.color ?? '#22d3ee'}; {sel ? `box-shadow: 0 0 0 3px ${pinLayer?.color ?? '#22d3ee'}44;` : ''}">{i + 1}</span>
+								<span class="badge" style="border-color: {pinLayer?.color ?? '#22d3ee'}; color: {pinLayer?.color ?? '#22d3ee'}; {sel ? `box-shadow: 0 0 0 3px ${pinLayer?.color ?? '#22d3ee'}44;` : ''}">
+									{#if pin.icon && PIN_ICONS[pin.icon]}
+										<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={PIN_ICONS[pin.icon].fill ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3"><path d={PIN_ICONS[pin.icon].path} /></svg>
+									{:else}
+										{i + 1}
+									{/if}
+								</span>
 								<div class="card-body">
 									<input
 										type="text" value={pin.label}
@@ -348,7 +405,7 @@
 											</svg>
 										{/if}
 									</button>
-									<button class="card-act del" onclick={(e) => { e.stopPropagation(); historyStore.push(); pinStore.removePin(pin.id); }} title="Delete">
+									<button class="card-act del" onclick={(e) => { e.stopPropagation(); historyStore.push('Removed pin'); pinStore.removePin(pin.id); }} title="Delete">
 										<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
 											<path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
 										</svg>
@@ -551,7 +608,7 @@
 				{#if drawingStore.drawings.length > 0}
 					<div class="content-header">
 						<span class="counter">{drawingStore.drawings.length} DRAWING{drawingStore.drawings.length !== 1 ? 'S' : ''}</span>
-						<button class="text-btn danger" onclick={() => { historyStore.push(); drawingStore.clearAll(); }}>Clear</button>
+						<button class="text-btn danger" onclick={() => { historyStore.push('Cleared all drawings'); drawingStore.clearAll(); }}>Clear</button>
 					</div>
 				{/if}
 
@@ -613,7 +670,7 @@
 									{/if}
 								</div>
 								<div class="card-actions">
-									<button class="card-act del" onclick={(e) => { e.stopPropagation(); historyStore.push(); drawingStore.removeDrawing(drawing.id); }} title="Delete">
+									<button class="card-act del" onclick={(e) => { e.stopPropagation(); historyStore.push('Removed drawing'); drawingStore.removeDrawing(drawing.id); }} title="Delete">
 										<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
 											<path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
 										</svg>
@@ -677,6 +734,58 @@
 										{/each}
 									</select>
 								</div>
+								{#if drawing.type === 'path' || drawing.type === 'arrow'}
+									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+									<div class="card-ts-row" onclick={(e) => e.stopPropagation()}>
+										<div class="card-ts-field">
+											<span class="card-layer-label">START</span>
+											<input
+												type="datetime-local"
+												value={drawing.timestamp ? new Date(new Date(drawing.timestamp).getTime() - new Date(drawing.timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+												oninput={(e) => {
+													const val = (e.target as HTMLInputElement).value;
+													const startIso = val ? new Date(val).toISOString() : undefined;
+													const updates: Record<string, string | undefined> = { timestamp: startIso };
+													if (startIso && !drawing.endTimestamp && drawing.points.length >= 2) {
+														const dist = polylineLength(drawing.points);
+														const durationMs = (dist / 40) * 3600000;
+														updates.endTimestamp = new Date(new Date(val).getTime() + durationMs).toISOString();
+													}
+													drawingStore.updateDrawing(drawing.id, updates);
+												}}
+												class="card-ts-input"
+											/>
+										</div>
+										<div class="card-ts-field">
+											<span class="card-layer-label">END</span>
+											<input
+												type="datetime-local"
+												value={drawing.endTimestamp ? new Date(new Date(drawing.endTimestamp).getTime() - new Date(drawing.endTimestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+												oninput={(e) => {
+													const val = (e.target as HTMLInputElement).value;
+													drawingStore.updateDrawing(drawing.id, { endTimestamp: val ? new Date(val).toISOString() : undefined });
+												}}
+												class="card-ts-input"
+											/>
+										</div>
+									</div>
+								{:else}
+									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+									<div class="card-ts-row" onclick={(e) => e.stopPropagation()}>
+										<div class="card-ts-field" style="flex: 1;">
+											<span class="card-layer-label">TIMESTAMP</span>
+											<input
+												type="datetime-local"
+												value={drawing.timestamp ? new Date(new Date(drawing.timestamp).getTime() - new Date(drawing.timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+												oninput={(e) => {
+													const val = (e.target as HTMLInputElement).value;
+													drawingStore.updateDrawing(drawing.id, { timestamp: val ? new Date(val).toISOString() : undefined });
+												}}
+												class="card-ts-input"
+											/>
+										</div>
+									</div>
+								{/if}
 							{/if}
 						</div>
 					{/each}
@@ -1015,6 +1124,106 @@
 		color: #94a3b8;
 	}
 
+	.pin-filter-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 3px;
+		border: 1px solid transparent;
+		background: transparent;
+		color: #475569;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.pin-filter-btn:hover {
+		color: #94a3b8;
+	}
+
+	.pin-filter-btn.active {
+		color: #22d3ee;
+		border-color: rgba(34, 211, 238, 0.3);
+		background: rgba(34, 211, 238, 0.1);
+	}
+
+	.pin-filter-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 6px 8px;
+		margin: 0 8px 6px;
+		border-radius: 4px;
+		background: rgba(15, 23, 42, 0.6);
+		border: 1px solid #1e293b;
+	}
+
+	.pin-filter-field {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.pin-filter-lbl {
+		font-size: 8px;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		color: #475569;
+		min-width: 55px;
+	}
+
+	.pin-filter-select {
+		flex: 1;
+		padding: 2px 4px;
+		border-radius: 3px;
+		border: 1px solid #1e293b;
+		background: #0f172a;
+		color: #94a3b8;
+		font-size: 9px;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		outline: none;
+	}
+
+	.pin-filter-radios {
+		display: flex;
+		gap: 8px;
+	}
+
+	.pin-filter-radio {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		font-size: 9px;
+		color: #94a3b8;
+		cursor: pointer;
+	}
+
+	.pin-filter-radio input {
+		width: 10px;
+		height: 10px;
+		accent-color: #22d3ee;
+		cursor: pointer;
+	}
+
+	.pin-filter-clear-btn {
+		padding: 2px 6px;
+		border-radius: 3px;
+		border: 1px solid #1e293b;
+		background: transparent;
+		color: #64748b;
+		font-size: 8px;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		align-self: flex-end;
+	}
+
+	.pin-filter-clear-btn:hover {
+		color: #e2e8f0;
+		border-color: #334155;
+	}
+
 	.text-btn {
 		font-size: 10px;
 		font-weight: 600;
@@ -1238,6 +1447,37 @@
 	}
 
 	.card-layer-sel:focus {
+		border-color: #334155;
+	}
+
+	.card-ts-row {
+		display: flex;
+		gap: 6px;
+		margin-top: 4px;
+		margin-left: 30px;
+	}
+
+	.card-ts-field {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.card-ts-input {
+		width: 100%;
+		padding: 2px 4px;
+		border-radius: 3px;
+		border: 1px solid #1e293b;
+		background: #0a0f1a;
+		color: #94a3b8;
+		font-size: 9px;
+		font-family: var(--font-mono);
+		outline: none;
+	}
+
+	.card-ts-input:focus {
 		border-color: #334155;
 	}
 

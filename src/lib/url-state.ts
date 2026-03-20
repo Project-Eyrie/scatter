@@ -22,6 +22,8 @@ interface ViewSettings {
 	pinLabelsVisible: boolean;
 	poiLabelsVisible: boolean;
 	routesVisible: boolean;
+	embedMode?: boolean;
+	readonlyMode?: boolean;
 }
 
 // Truncates a string to a maximum length
@@ -49,12 +51,12 @@ function buildState(
 	}
 
 	if (pinStore.pins.length > 0) {
-		state.p = pinStore.pins.map((p) => [
-			roundCoord(p.lat),
-			roundCoord(p.lng),
-			truncate(p.label, MAX_PIN_LABEL_LENGTH),
-			p.layerId
-		]);
+		state.p = pinStore.pins.map((p) => {
+			const entry: unknown[] = [roundCoord(p.lat), roundCoord(p.lng), truncate(p.label, MAX_PIN_LABEL_LENGTH), p.layerId];
+			if (p.icon || p.timestamp) entry.push(p.icon || null);
+			if (p.timestamp) entry.push(p.timestamp);
+			return entry;
+		});
 	}
 
 	if (drawingStore.drawings.length > 0) {
@@ -78,6 +80,16 @@ function buildState(
 			entry.push(sw !== DEFAULT_STROKE_WIDTH ? sw : null);
 			entry.push(d.animated ? true : null);
 			entry.push(d.reversed ? true : null);
+			if (d.timestamp || d.endTimestamp || d.waypointPinIds) {
+				entry.push(d.timestamp || null);
+				entry.push(d.endTimestamp || null);
+				if (d.waypointPinIds && d.waypointPinIds.length > 0) {
+					entry.push(d.waypointPinIds.map(wpId => {
+						const idx = pinStore.pins.findIndex(p => p.id === wpId);
+						return idx >= 0 ? idx : 0;
+					}));
+				}
+			}
 			return entry;
 		});
 	}
@@ -106,8 +118,12 @@ function buildState(
 
 	if (viewSettings) {
 		const vs = viewSettings;
-		if (!vs.labelsVisible || !vs.notesVisible || vs.heatmapEnabled || vs.isSatellite || vs.tiltEnabled || !vs.pinLabelsVisible || vs.poiLabelsVisible || !vs.routesVisible) {
-			state.vs = [vs.labelsVisible, vs.notesVisible, vs.heatmapEnabled, vs.isSatellite, vs.tiltEnabled, vs.pinLabelsVisible, vs.poiLabelsVisible, vs.routesVisible];
+		if (!vs.labelsVisible || !vs.notesVisible || vs.heatmapEnabled || vs.isSatellite || vs.tiltEnabled || !vs.pinLabelsVisible || vs.poiLabelsVisible || !vs.routesVisible || vs.embedMode || vs.readonlyMode) {
+			const arr: unknown[] = [vs.labelsVisible, vs.notesVisible, vs.heatmapEnabled, vs.isSatellite, vs.tiltEnabled, vs.pinLabelsVisible, vs.poiLabelsVisible, vs.routesVisible];
+			if (vs.embedMode || vs.readonlyMode) {
+				arr.push(vs.embedMode ?? false, vs.readonlyMode ?? false);
+			}
+			state.vs = arr;
 		}
 	}
 
@@ -177,22 +193,26 @@ export async function decodeMapState(hash: string, password?: string): Promise<{
 
 		if (state.p && Array.isArray(state.p)) {
 			const pins: Pin[] = state.p.map(
-				(entry: (string | number)[], i: number) => ({
+				(entry: (string | number | null)[], i: number) => ({
 					id: `shared-pin-${i}`,
 					lat: entry[0] as number,
 					lng: entry[1] as number,
 					label: (entry[2] as string) || `Pin ${i + 1}`,
-					layerId: (entry[3] as string) || 'default'
+					layerId: (entry[3] as string) || 'default',
+					...(typeof entry[4] === 'string' ? { icon: entry[4] } : {}),
+					...(typeof entry[5] === 'string' ? { timestamp: entry[5] } : {})
 				})
 			);
 			pinStore.loadPins(pins);
 		}
 
 		if (state.d && Array.isArray(state.d)) {
+			const pinIds = pinStore.pins.map((p) => p.id);
 			const drawings: Drawing[] = state.d.map((entry: unknown[], i: number) => {
 				const rawType = entry[0] as string;
 				const type = (rawType === 'polyline' ? 'path' : rawType) as Drawing['type'];
 				const defaultLabel = `${type.charAt(0).toUpperCase() + type.slice(1)} ${i + 1}`;
+				const wpIndices = (entry.length > 12 && Array.isArray(entry[12])) ? entry[12] as number[] : undefined;
 				return {
 					id: `shared-draw-${i}`,
 					type,
@@ -207,7 +227,10 @@ export async function decodeMapState(hash: string, password?: string): Promise<{
 					text: (entry[5] != null) ? (entry[5] as string) : undefined,
 					strokeWidth: (entry.length > 7 && entry[7] != null) ? (entry[7] as number) : DEFAULT_STROKE_WIDTH,
 					animated: (entry.length > 8 && entry[8]) ? true : undefined,
-					reversed: (entry.length > 9 && entry[9]) ? true : undefined
+					reversed: (entry.length > 9 && entry[9]) ? true : undefined,
+					timestamp: (entry.length > 10 && typeof entry[10] === 'string') ? entry[10] : undefined,
+					endTimestamp: (entry.length > 11 && typeof entry[11] === 'string') ? entry[11] : undefined,
+					waypointPinIds: wpIndices ? wpIndices.map(idx => pinIds[idx] ?? pinIds[0]) : undefined
 				};
 			});
 			drawingStore.loadDrawings(drawings);
@@ -252,7 +275,9 @@ export async function decodeMapState(hash: string, password?: string): Promise<{
 				tiltEnabled: state.vs[4] ?? false,
 				pinLabelsVisible: state.vs[5] ?? true,
 				poiLabelsVisible: state.vs[6] ?? false,
-				routesVisible: state.vs[7] ?? true
+				routesVisible: state.vs[7] ?? true,
+				embedMode: state.vs[8] ?? false,
+				readonlyMode: state.vs[9] ?? false
 			};
 		}
 

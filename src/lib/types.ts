@@ -6,6 +6,7 @@ export interface Pin {
 	label: string;
 	layerId: string;
 	timestamp?: string;
+	icon?: string;
 }
 
 export interface RouteInfo {

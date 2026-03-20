@@ -7,6 +7,8 @@ import { MAX_HISTORY } from './constants';
 interface Snapshot {
 	pins: Pin[];
 	drawings: Drawing[];
+	description: string;
+	timestamp: number;
 }
 
 // Creates the singleton reactive history store
@@ -16,10 +18,12 @@ function createHistoryStore() {
 	let ignoreNext = false;
 
 	// Takes a snapshot of current pins and drawings state
-	function capture(): Snapshot {
+	function capture(description: string): Snapshot {
 		return {
 			pins: pinStore.pins.map((p) => ({ ...p })),
-			drawings: drawingStore.drawings.map((d) => ({ ...d, points: [...d.points] }))
+			drawings: drawingStore.drawings.map((d) => ({ ...d, points: [...d.points] })),
+			description,
+			timestamp: Date.now()
 		};
 	}
 
@@ -38,18 +42,24 @@ function createHistoryStore() {
 		get canRedo() {
 			return redoStack.length > 0;
 		},
+		get undoEntries() {
+			return undoStack;
+		},
+		get redoEntries() {
+			return redoStack;
+		},
 
 		// Saves current state before a mutation
-		push() {
+		push(description = 'Action') {
 			if (ignoreNext) return;
-			undoStack = [...undoStack.slice(-(MAX_HISTORY - 1)), capture()];
+			undoStack = [...undoStack.slice(-(MAX_HISTORY - 1)), capture(description)];
 			redoStack = [];
 		},
 
 		// Reverts to the previous state
 		undo() {
 			if (undoStack.length === 0) return;
-			const current = capture();
+			const current = capture('Current');
 			const prev = undoStack[undoStack.length - 1];
 			undoStack = undoStack.slice(0, -1);
 			redoStack = [...redoStack, current];
@@ -59,11 +69,23 @@ function createHistoryStore() {
 		// Re-applies a previously undone state
 		redo() {
 			if (redoStack.length === 0) return;
-			const current = capture();
+			const current = capture('Current');
 			const next = redoStack[redoStack.length - 1];
 			redoStack = redoStack.slice(0, -1);
 			undoStack = [...undoStack, current];
 			restore(next);
+		},
+
+		// Jumps to a specific undo stack entry by index
+		jumpTo(index: number) {
+			if (index < 0 || index >= undoStack.length) return;
+			const current = capture('Current');
+			const target = undoStack[index];
+			const moved = undoStack.slice(index + 1);
+			moved.push(current);
+			redoStack = [...redoStack, ...moved];
+			undoStack = undoStack.slice(0, index);
+			restore(target);
 		},
 
 		// Clears all history stacks

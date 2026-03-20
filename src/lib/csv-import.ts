@@ -11,7 +11,6 @@ const TIME_ONLY_NAMES = ['time'];
 // Auto-detects delimiter from the first line of text
 function detectDelimiter(text: string): string {
 	const firstLine = text.split(/\r?\n/)[0] || '';
-	// Count unquoted delimiters
 	let commas = 0, semicolons = 0, tabs = 0;
 	let inQuotes = false;
 	for (const ch of firstLine) {
@@ -28,7 +27,6 @@ function detectDelimiter(text: string): string {
 
 // Parses CSV text into rows of string arrays, handling quoted fields and auto-detecting delimiter
 export function parseCsv(text: string): string[][] {
-	// Strip BOM
 	const cleaned = text.replace(/^\uFEFF/, '');
 	const delimiter = detectDelimiter(cleaned);
 	const rows: string[][] = [];
@@ -83,7 +81,6 @@ export function detectColumns(headers: string[]): { lat: number; lng: number; la
 export function hasHeaderRow(firstRow: string[]): boolean {
 	const detected = detectColumns(firstRow);
 	if (detected.lat !== -1 && detected.lng !== -1) return true;
-	// If any value in the first row is non-numeric text, treat it as a header
 	return firstRow.some(val => {
 		const trimmed = val.trim();
 		if (!trimmed) return false;
