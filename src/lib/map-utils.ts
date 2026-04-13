@@ -45,16 +45,16 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 
 	const badge = document.createElement('div');
 	const glowShadow = timeHighlight
-		? `box-shadow: 0 0 0 5px ${layerColor}55, 0 0 18px 4px ${layerColor}66, 0 2px 12px rgba(0,0,0,0.5), inset 0 0 8px ${color}33; animation: timeline-glow 1.2s ease-in-out infinite alternate;`
+		? `box-shadow: 0 0 0 4px ${layerColor}55, 0 0 12px 2px ${layerColor}44, 0 2px 6px rgba(0,0,0,0.25); animation: timeline-glow 1.2s ease-in-out infinite alternate;`
 		: selected
-			? `box-shadow: 0 0 0 3px ${color}44, 0 2px 12px rgba(0,0,0,0.5), inset 0 0 8px ${color}33;`
-			: `box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 0 8px ${color}22;`;
+			? `box-shadow: 0 0 0 3px ${color}44, 0 2px 6px rgba(0,0,0,0.25);`
+			: `box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.08);`;
 	badge.style.cssText = `
-		width: 30px; height: 30px; border-radius: 50%;
-		background: #0f172a; border: 2.5px solid ${color};
+		width: 28px; height: 28px; border-radius: 50%;
+		background: ${color}; border: 2px solid #fff;
 		display: flex; align-items: center; justify-content: center;
-		font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
-		color: ${color};
+		font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700;
+		color: #fff;
 		${glowShadow}
 		transition: all 0.15s;
 		position: relative;
@@ -66,8 +66,8 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 		svg.setAttribute('viewBox', '0 0 24 24');
 		svg.setAttribute('width', '16');
 		svg.setAttribute('height', '16');
-		svg.setAttribute('fill', iconDef.fill ? color : 'none');
-		svg.setAttribute('stroke', color);
+		svg.setAttribute('fill', iconDef.fill ? '#fff' : 'none');
+		svg.setAttribute('stroke', '#fff');
 		svg.setAttribute('stroke-width', '2');
 		svg.setAttribute('stroke-linecap', 'round');
 		svg.setAttribute('stroke-linejoin', 'round');
@@ -84,7 +84,7 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 	pointer.style.cssText = `
 		width: 2px; height: 8px; background: ${color};
 		border-radius: 0 0 1px 1px; margin-top: -1px;
-		box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+		box-shadow: 0 2px 4px rgba(0,0,0,0.08);
 		z-index: 1;
 	`;
 	wrapper.appendChild(pointer);
@@ -96,19 +96,19 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 		const tooltip = document.createElement('div');
 		tooltip.style.cssText = `
 			position: absolute; top: ${tooltipTop}px; left: 50%; transform: translateX(calc(-50% + ${ox}px));
-			padding: 3px 8px; border-radius: 4px;
-			background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(6px);
+			padding: 3px 8px; border-radius: 2px;
+			background: rgba(255,255,255,0.95);
 			border: 1px solid ${color}66;
 			font-family: 'JetBrains Mono', monospace;
 			white-space: nowrap;
 			max-width: 180px; overflow: hidden;
 			pointer-events: none;
-			box-shadow: 0 1px 6px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.3);
+			box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 			display: flex; flex-direction: column; align-items: center;
 		`;
 		const labelEl = document.createElement('div');
 		labelEl.style.cssText = `
-			color: #e2e8f0; font-size: 9px; font-weight: 600;
+			color: #1a1a1a; font-size: 9px; font-weight: 600;
 			overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 		`;
 		labelEl.textContent = label;
@@ -116,7 +116,7 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 		if (timestamp) {
 			const tsEl = document.createElement('div');
 			tsEl.style.cssText = `
-				color: #64748b; font-size: 8px; font-weight: 400;
+				color: #999; font-size: 8px; font-weight: 400;
 				margin-top: 1px;
 			`;
 			tsEl.textContent = timestamp;
@@ -138,12 +138,13 @@ export function createSearchMarkerContent(name: string): HTMLElement {
 
 	const label = document.createElement('div');
 	label.style.cssText = `
-		margin-bottom: 2px; padding: 1px 5px; border-radius: 3px;
-		background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(4px);
-		border: 1px solid rgba(34, 211, 238, 0.2);
-		color: #cbd5e1; font-family: 'JetBrains Mono', monospace;
+		margin-bottom: 2px; padding: 1px 5px; border-radius: 2px;
+		background: rgba(255,255,255,0.95);
+		border: 1px solid rgba(34, 211, 238, 0.3);
+		color: #333; font-family: 'JetBrains Mono', monospace;
 		font-size: 8px; white-space: nowrap;
 		max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+		box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 	`;
 	label.textContent = name;
 	wrapper.appendChild(label);
@@ -151,8 +152,7 @@ export function createSearchMarkerContent(name: string): HTMLElement {
 	const dot = document.createElement('div');
 	dot.style.cssText = `
 		width: 14px; height: 14px; border-radius: 50%;
-		background: rgba(34, 211, 238, 0.2); border: 2px solid rgba(34, 211, 238, 0.7);
-		box-shadow: 0 0 6px rgba(34, 211, 238, 0.25);
+		background: rgba(34, 211, 238, 0.15); border: 2px solid rgba(34, 211, 238, 0.7);
 	`;
 	wrapper.appendChild(dot);
 
@@ -186,13 +186,13 @@ export function createNoteContent(text: string, color: string, selected: boolean
 
 		const textBox = document.createElement('div');
 		textBox.style.cssText = `
-			padding: 6px 10px; border-radius: 6px; max-width: 200px;
-			background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(8px);
+			padding: 6px 10px; border-radius: 2px; max-width: 200px;
+			background: rgba(255,255,255,0.95);
 			border: 1.5px solid ${color};
 			border-top: 2px solid ${color};
-			color: #e2e8f0; font-family: 'JetBrains Mono', monospace;
+			color: #1a1a1a; font-family: 'JetBrains Mono', monospace;
 			font-size: 11px; line-height: 1.4;
-			box-shadow: 0 0 12px ${color}33, 0 2px 12px rgba(0,0,0,0.5);
+			box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 			white-space: pre-wrap; word-break: break-word;
 		`;
 		textBox.textContent = text;
@@ -214,11 +214,11 @@ export function createNoteContent(text: string, color: string, selected: boolean
 	const icon = document.createElement('div');
 	icon.style.cssText = `
 		width: 24px; height: 24px; border-radius: 50%;
-		background: ${color}; border: 2px solid rgba(15, 23, 42, 0.8);
+		background: ${color}; border: 2px solid rgba(255, 255, 255, 0.8);
 		display: flex; align-items: center; justify-content: center;
 		color: #fff; font-family: 'JetBrains Mono', monospace;
 		font-size: 14px; font-weight: 700; line-height: 1;
-		box-shadow: 0 2px 8px rgba(0,0,0,0.4)${selected ? `, 0 0 12px ${color}66` : ''};
+		box-shadow: 0 1px 4px rgba(0,0,0,0.12);
 	`;
 	icon.textContent = '!';
 	wrapper.appendChild(icon);
@@ -236,12 +236,12 @@ export function createDrawingLabelContent(label: string, color: string): HTMLEle
 
 	const el = document.createElement('div');
 	el.style.cssText = `
-		padding: 2px 6px; border-radius: 3px;
-		background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(4px);
+		padding: 2px 6px; border-radius: 2px;
+		background: rgba(255,255,255,0.95);
 		border: 1px solid ${color}66;
 		color: ${color}; font-family: 'JetBrains Mono', monospace;
 		font-size: 9px; font-weight: 600; white-space: nowrap;
-		box-shadow: 0 1px 6px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.3);
+		box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 	`;
 	el.textContent = label;
 	wrapper.appendChild(el);

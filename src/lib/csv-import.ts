@@ -7,6 +7,13 @@ const LABEL_NAMES = ['name', 'label', 'title', 'description', 'place'];
 const COMBINED_TIMESTAMP_NAMES = ['timestamp', 'datetime', 'date_time', 'utc'];
 const DATE_ONLY_NAMES = ['date'];
 const TIME_ONLY_NAMES = ['time'];
+const AZIMUTH_NAMES = ['azimuth', 'bearing', 'heading', 'direction'];
+const RADIUS_NAMES = ['radius', 'accuracy', 'hdop'];
+const ICON_NAMES = ['icon', 'type', 'category', 'marker'];
+const LAYER_COL_NAMES = ['layer', 'group', 'folder'];
+const ALTITUDE_NAMES = ['altitude', 'elevation', 'alt', 'height'];
+const SPEED_NAMES = ['speed', 'velocity'];
+const NOTES_NAMES = ['notes', 'comment', 'remarks', 'note'];
 
 // Auto-detects delimiter from the first line of text
 function detectDelimiter(text: string): string {
@@ -65,16 +72,31 @@ export function parseCsv(text: string): string[][] {
 	return rows;
 }
 
-// Auto-detects column indices for lat, lng, label, and timestamp from header names
-export function detectColumns(headers: string[]): { lat: number; lng: number; label: number; timestamp: number; date: number; time: number } {
+export interface DetectedColumns {
+	lat: number; lng: number; label: number; timestamp: number; date: number; time: number;
+	azimuth: number; radius: number; icon: number; layer: number;
+	altitude: number; speed: number; notes: number;
+}
+
+// Auto-detects column indices for lat, lng, label, timestamp, and extended fields from header names
+export function detectColumns(headers: string[]): DetectedColumns {
 	const lower = headers.map((h) => h.toLowerCase().trim());
-	const lat = lower.findIndex((h) => LAT_NAMES.includes(h));
-	const lng = lower.findIndex((h) => LNG_NAMES.includes(h));
-	const label = lower.findIndex((h) => LABEL_NAMES.includes(h));
-	const timestamp = lower.findIndex((h) => COMBINED_TIMESTAMP_NAMES.includes(h));
-	const date = lower.findIndex((h) => DATE_ONLY_NAMES.includes(h));
-	const time = lower.findIndex((h) => TIME_ONLY_NAMES.includes(h));
-	return { lat, lng, label, timestamp, date, time };
+	const find = (names: string[]) => lower.findIndex((h) => names.includes(h));
+	return {
+		lat: find(LAT_NAMES),
+		lng: find(LNG_NAMES),
+		label: find(LABEL_NAMES),
+		timestamp: find(COMBINED_TIMESTAMP_NAMES),
+		date: find(DATE_ONLY_NAMES),
+		time: find(TIME_ONLY_NAMES),
+		azimuth: find(AZIMUTH_NAMES),
+		radius: find(RADIUS_NAMES),
+		icon: find(ICON_NAMES),
+		layer: find(LAYER_COL_NAMES),
+		altitude: find(ALTITUDE_NAMES),
+		speed: find(SPEED_NAMES),
+		notes: find(NOTES_NAMES)
+	};
 }
 
 // Checks if a header row looks like column names (not numeric data)
@@ -253,10 +275,10 @@ function escapeCsvField(val: string): string {
 }
 
 // Exports pins as a downloadable CSV file
-export function exportCsv(pins: Array<{ lat: number; lng: number; label: string; timestamp?: string }>): void {
-	const header = 'latitude,longitude,label,timestamp';
+export function exportCsv(pins: Array<{ lat: number; lng: number; label: string; timestamp?: string; azimuth?: number; radius?: number; altitude?: number; speed?: number; notes?: string; icon?: string }>): void {
+	const header = 'latitude,longitude,label,timestamp,azimuth,radius,altitude,speed,icon,notes';
 	const rows = pins.map(p =>
-		`${p.lat},${p.lng},${escapeCsvField(p.label)},${p.timestamp ?? ''}`
+		`${p.lat},${p.lng},${escapeCsvField(p.label)},${p.timestamp ?? ''},${p.azimuth ?? ''},${p.radius ?? ''},${p.altitude ?? ''},${p.speed ?? ''},${p.icon ?? ''},${escapeCsvField(p.notes ?? '')}`
 	);
 	const csv = [header, ...rows].join('\n');
 	const blob = new Blob([csv], { type: 'text/csv' });

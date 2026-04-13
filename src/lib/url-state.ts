@@ -55,6 +55,11 @@ function buildState(
 			const entry: unknown[] = [roundCoord(p.lat), roundCoord(p.lng), truncate(p.label, MAX_PIN_LABEL_LENGTH), p.layerId];
 			if (p.icon || p.timestamp) entry.push(p.icon || null);
 			if (p.timestamp) entry.push(p.timestamp);
+			const hasExtended = p.azimuth != null || p.radius != null || p.altitude != null || p.speed != null || p.notes;
+			if (hasExtended) {
+				while (entry.length < 6) entry.push(null);
+				entry.push(p.azimuth ?? null, p.radius ?? null, p.altitude ?? null, p.speed ?? null, p.notes ? truncate(p.notes, 200) : null);
+			}
 			return entry;
 		});
 	}
@@ -200,7 +205,12 @@ export async function decodeMapState(hash: string, password?: string): Promise<{
 					label: (entry[2] as string) || `Pin ${i + 1}`,
 					layerId: (entry[3] as string) || 'default',
 					...(typeof entry[4] === 'string' ? { icon: entry[4] } : {}),
-					...(typeof entry[5] === 'string' ? { timestamp: entry[5] } : {})
+					...(typeof entry[5] === 'string' ? { timestamp: entry[5] } : {}),
+					...(entry.length > 6 && entry[6] != null ? { azimuth: entry[6] as number } : {}),
+					...(entry.length > 7 && entry[7] != null ? { radius: entry[7] as number } : {}),
+					...(entry.length > 8 && entry[8] != null ? { altitude: entry[8] as number } : {}),
+					...(entry.length > 9 && entry[9] != null ? { speed: entry[9] as number } : {}),
+					...(entry.length > 10 && typeof entry[10] === 'string' ? { notes: entry[10] } : {})
 				})
 			);
 			pinStore.loadPins(pins);

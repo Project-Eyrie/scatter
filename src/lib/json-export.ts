@@ -3,6 +3,7 @@ import type { Pin, Drawing, Layer, RoutePair, TravelMode } from './types';
 import { pinStore } from './stores.svelte';
 import { drawingStore } from './drawing-store.svelte';
 import { layerStore } from './layer-store.svelte';
+import { deflateCompress, deflateDecompress, encryptData, decryptData } from './compression';
 
 interface ScatterExport {
 	version: 2;
@@ -124,20 +125,50 @@ export function importJson(raw: string): {
 	}
 }
 
-// Opens a file picker dialog, reads the selected JSON file, and imports it
-export function openImportDialog(): Promise<ReturnType<typeof importJson>> {
+// Exports encrypted JSON as a downloadable .scatter file
+export async function downloadEncryptedJson(data: ScatterExport, password: string): Promise<void> {
+	const json = JSON.stringify(data);
+	const compressed = await deflateCompress(json);
+	const encrypted = await encryptData(compressed, password);
+	const blob = new Blob([encrypted], { type: 'application/octet-stream' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = `scatter-export-${Date.now()}.scatter`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
+// Imports and decrypts a .scatter file
+export async function importEncryptedJson(data: ArrayBuffer, password: string): ReturnType<typeof importJson> {
+	try {
+		const decrypted = await decryptData(new Uint8Array(data), password);
+		const json = await deflateDecompress(decrypted);
+		return importJson(json);
+	} catch {
+		return null;
+	}
+}
+
+// Opens a file picker dialog, reads the selected JSON or .scatter file, and imports it
+export function openImportDialog(): Promise<{ result: ReturnType<typeof importJson>; encrypted?: boolean; fileData?: ArrayBuffer } | null> {
 	return new Promise((resolve) => {
 		const input = document.createElement('input');
 		input.type = 'file';
-		input.accept = '.json';
+		input.accept = '.json,.scatter';
 		input.onchange = async () => {
 			const file = input.files?.[0];
 			if (!file) {
 				resolve(null);
 				return;
 			}
-			const text = await file.text();
-			resolve(importJson(text));
+			if (file.name.endsWith('.scatter')) {
+				const data = await file.arrayBuffer();
+				resolve({ result: null, encrypted: true, fileData: data });
+			} else {
+				const text = await file.text();
+				resolve({ result: importJson(text) });
+			}
 		};
 		input.click();
 	});

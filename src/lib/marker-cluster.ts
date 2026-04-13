@@ -130,15 +130,15 @@ export class SimpleClusterer {
 		const popup = document.createElement('div');
 		popup.style.cssText = `
 			position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-			margin-bottom: 8px; padding: 8px 10px; border-radius: 6px;
-			background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px);
-			border: 1px solid #1e293b; min-width: 120px; z-index: 50;
+			margin-bottom: 8px; padding: 8px 10px; border-radius: 2px;
+			background: rgba(255,255,255,0.95);
+			border: 1px solid #e0e0e0; min-width: 120px; z-index: 50;
 			font-family: 'JetBrains Mono', monospace;
-			box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+			box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 		`;
 
 		const header = document.createElement('div');
-		header.style.cssText = 'color: #e2e8f0; font-size: 11px; font-weight: 700; margin-bottom: 6px;';
+		header.style.cssText = 'color: #1a1a1a; font-size: 11px; font-weight: 700; margin-bottom: 6px;';
 		header.textContent = `${group.length} pins`;
 		popup.appendChild(header);
 
@@ -149,11 +149,11 @@ export class SimpleClusterer {
 			dot.style.cssText = `width: 6px; height: 6px; border-radius: 50%; background: ${entry.color}; flex-shrink: 0;`;
 			row.appendChild(dot);
 			const name = document.createElement('span');
-			name.style.cssText = 'color: #94a3b8; font-size: 9px; flex: 1;';
+			name.style.cssText = 'color: #666; font-size: 9px; flex: 1;';
 			name.textContent = entry.name;
 			row.appendChild(name);
 			const count = document.createElement('span');
-			count.style.cssText = 'color: #64748b; font-size: 9px;';
+			count.style.cssText = 'color: #999; font-size: 9px;';
 			count.textContent = `${entry.count}`;
 			row.appendChild(count);
 			popup.appendChild(row);
@@ -161,7 +161,7 @@ export class SimpleClusterer {
 
 		if (hasTimestamps && minTs !== Infinity) {
 			const timeRow = document.createElement('div');
-			timeRow.style.cssText = 'color: #475569; font-size: 8px; margin-top: 4px; border-top: 1px solid #1e293b; padding-top: 4px;';
+			timeRow.style.cssText = 'color: #999; font-size: 8px; margin-top: 4px; border-top: 1px solid #e0e0e0; padding-top: 4px;';
 			const fmt = (t: number) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
 			timeRow.textContent = minTs === maxTs ? fmt(minTs) : `${fmt(minTs)} — ${fmt(maxTs)}`;
 			popup.appendChild(timeRow);
@@ -170,8 +170,8 @@ export class SimpleClusterer {
 		const zoomBtn = document.createElement('button');
 		zoomBtn.style.cssText = `
 			display: block; width: 100%; margin-top: 6px; padding: 3px;
-			border-radius: 3px; border: 1px solid rgba(34, 211, 238, 0.3);
-			background: rgba(34, 211, 238, 0.1); color: #22d3ee;
+			border-radius: 2px; border: 1px solid #e0e0e0;
+			background: #f8f9fa; color: #2563eb;
 			font-family: 'JetBrains Mono', monospace; font-size: 9px;
 			font-weight: 600; cursor: pointer; text-align: center;
 		`;
@@ -237,11 +237,10 @@ export class SimpleClusterer {
 				const el = document.createElement('div');
 				el.style.cssText = `
 					width: 36px; height: 36px; border-radius: 50%;
-					background: rgba(34, 211, 238, 0.15); border: 2px solid rgba(34, 211, 238, 0.5);
+					background: rgba(34, 211, 238, 0.08); border: 2px solid rgba(34, 211, 238, 0.5);
 					display: flex; align-items: center; justify-content: center;
 					font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
 					color: #22d3ee; cursor: pointer;
-					backdrop-filter: blur(4px);
 				`;
 				el.textContent = `${group.length}`;
 				wrapper.appendChild(el);

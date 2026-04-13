@@ -7,6 +7,11 @@ export interface Pin {
 	layerId: string;
 	timestamp?: string;
 	icon?: string;
+	azimuth?: number;
+	radius?: number;
+	altitude?: number;
+	speed?: number;
+	notes?: string;
 }
 
 export interface RouteInfo {

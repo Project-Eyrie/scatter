@@ -1,4 +1,5 @@
-// Deflate compression and base64url encoding for compact URL state storage
+// Deflate compression, base64url encoding, and AES-GCM encryption for compact URL state storage
+
 // Reads all chunks from a ReadableStream into a single Uint8Array
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
 	const reader = stream.getReader();

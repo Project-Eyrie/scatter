@@ -43,7 +43,7 @@ function createPinStore() {
 		},
 
 		// Updates a pin's label or layer assignment with length enforcement
-		updatePin(id: string, updates: Partial<Pick<Pin, 'label' | 'layerId' | 'timestamp' | 'icon'>>) {
+		updatePin(id: string, updates: Partial<Pick<Pin, 'label' | 'layerId' | 'timestamp' | 'icon' | 'azimuth' | 'radius' | 'altitude' | 'speed' | 'notes'>>) {
 			const clamped = { ...updates };
 			if (clamped.label !== undefined) {
 				clamped.label = clamped.label.slice(0, MAX_PIN_LABEL_LENGTH);

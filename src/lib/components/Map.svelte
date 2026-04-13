@@ -9,7 +9,7 @@
 	import { layerStore } from '$lib/layer-store.svelte';
 	import { historyStore } from '$lib/history-store.svelte';
 	import { createMarkerContent, createSearchMarkerContent, createNoteContent, createDrawingLabelContent, getDrawingLabelPosition, resolveOverlaps, computePinLabelOffsets } from '$lib/map-utils';
-	import { ROUTE_COLORS, LABEL_MIN_ZOOM, LABEL_BLOCK_ZOOM } from '$lib/constants';
+	import { ROUTE_COLORS } from '$lib/constants';
 	import { formatTimestamp } from '$lib/csv-import';
 	import type { RouteInfo, Drawing, RoutePair, TravelMode, NearbyResult } from '$lib/types';
 
@@ -40,6 +40,13 @@
 	let drawingLabelMarkers: Map<string, CustomMarker> = new Map();
 	let pathAnimations: Map<string, number> = new Map();
 	let visiblePinIds: Set<string> = new Set();
+	let azimuthSectors: Map<string, google.maps.Polygon> = new Map();
+	let toolCircleShapes: Map<string, google.maps.Circle> = new Map();
+	let sunLine: google.maps.Polyline | null = null;
+	let shadowLine: google.maps.Polyline | null = null;
+	let weatherOverlay: google.maps.ImageMapType | null = null;
+	let currentWeatherLayer: string | null = null;
+	let radiusCircles: Map<string, google.maps.Circle> = new Map();
 	let routeGeneration = 0;
 
 	let cursorLat = $state(0);
@@ -50,6 +57,7 @@
 
 	interface Props {
 		apiKey: string;
+		mapId?: string;
 		onRoutesCalculated?: (results: (RouteInfo | null)[][]) => void;
 		onRoutePathsUpdated?: (paths: DrawingPoint[][][]) => void;
 		routes?: RoutePair[];
@@ -69,14 +77,21 @@
 		searchResults?: Array<{ lat: number; lng: number; name: string }>;
 		onDrawingFinish?: (radius?: number) => void;
 		clusterMaxZoom?: number;
+		labelMinZoom?: number;
 		routesVisible?: boolean;
 		timeFilter?: number | null;
 		timelineHiddenLayers?: Set<string>;
 		hiddenPinIds?: Set<string> | null;
+		toolCircles?: Array<{ id: string; lat: number; lng: number; radius: number; label: string; color: string }>;
+		sunAzimuth?: number | null;
+		sunAltitude?: number | null;
+		weatherLayer?: string | null;
+		weatherApiKey?: string;
 	}
 
 	let {
 		apiKey,
+		mapId,
 		onRoutesCalculated,
 		onRoutePathsUpdated,
 		routes = [],
@@ -96,15 +111,21 @@
 		searchResults = [],
 		onDrawingFinish,
 		clusterMaxZoom = 14,
+		labelMinZoom = 14,
 		routesVisible = true,
 		timeFilter = null,
 		timelineHiddenLayers = new Set<string>(),
-		hiddenPinIds = null as Set<string> | null
+		hiddenPinIds = null as Set<string> | null,
+		toolCircles = [] as Array<{ id: string; lat: number; lng: number; radius: number; label: string; color: string }>,
+		sunAzimuth = null as number | null,
+		sunAltitude = null as number | null,
+		weatherLayer = null as string | null,
+		weatherApiKey = ''
 	}: Props = $props();
 
 	// Initializes the Google Maps instance, clusterer, and all event listeners
 	onMount(async () => {
-		setOptions({ key: apiKey, v: 'weekly' });
+		setOptions({ key: apiKey, v: 'beta' });
 
 		await Promise.all([
 			importLibrary('maps'),
@@ -118,14 +139,7 @@
 		const center = initialCenter ?? { lat: 30, lng: 0 };
 		const zoom = initialZoom ?? 3;
 
-		const initialStyles: google.maps.MapTypeStyle[] = poiLabelsVisible
-			? []
-			: [
-				{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-				{ featureType: 'poi.business', elementType: 'all', stylers: [{ visibility: 'off' }] }
-			];
-
-		map = new google.maps.Map(mapEl, {
+		const mapOpts: google.maps.MapOptions = {
 			center,
 			zoom,
 			disableDefaultUI: true,
@@ -137,9 +151,25 @@
 			mapTypeControl: false,
 			streetViewControl: false,
 			fullscreenControl: false,
-			backgroundColor: '#0a0f1a',
-			styles: initialStyles
-		});
+			backgroundColor: '#f0f4f8'
+		};
+
+		if (mapId) {
+			mapOpts.mapId = mapId;
+			mapOpts.renderingType = google.maps.RenderingType.VECTOR;
+			mapOpts.isFractionalZoomEnabled = true;
+			mapOpts.tiltInteractionEnabled = true;
+			mapOpts.headingInteractionEnabled = true;
+		} else {
+			if (!poiLabelsVisible) {
+				mapOpts.styles = [
+					{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+					{ featureType: 'poi.business', elementType: 'all', stylers: [{ visibility: 'off' }] }
+				];
+			}
+		}
+
+		map = new google.maps.Map(mapEl, mapOpts);
 
 		geocoder = new google.maps.Geocoder();
 
@@ -406,7 +436,7 @@
 		}
 
 		const zoom = mapZoom;
-		const hideLabel = zoom < LABEL_BLOCK_ZOOM;
+		const hideLabel = zoom < (labelMinZoom + 1);
 		const labelOffsets = showPinLabels
 			? computePinLabelOffsets(
 				currentPins.map((pin) => {
@@ -464,6 +494,95 @@
 		visiblePinIds = newVisiblePinIds;
 	});
 
+	// Renders azimuth sectors and radius circles for pins that have them
+	$effect(() => {
+		if (!ready || !map) return;
+
+		const currentPins = pinStore.pins;
+		const pinIds = new Set(currentPins.map((p) => p.id));
+		const layerMap = new Map(layerStore.layers.map((l) => [l.id, l]));
+		const tf = timeFilter;
+
+		for (const [id, sector] of azimuthSectors) {
+			if (!pinIds.has(id)) { sector.setMap(null); azimuthSectors.delete(id); }
+		}
+		for (const [id, circle] of radiusCircles) {
+			if (!pinIds.has(id)) { circle.setMap(null); radiusCircles.delete(id); }
+		}
+
+		for (const pin of currentPins) {
+			const layer = layerMap.get(pin.layerId);
+			const layerVisible = layer ? layer.visible : true;
+			const visible = layerVisible && isTimeVisible(pin.timestamp) && !timelineHiddenLayers.has(pin.layerId);
+			const color = layer?.color ?? '#22d3ee';
+
+			if (pin.azimuth !== undefined && pin.azimuth !== null && visible) {
+				const sectorAngle = 120;
+				const dist = pin.radius && pin.radius > 0 ? pin.radius / 111320 : 0.003;
+				const startAngle = (pin.azimuth - sectorAngle / 2) * Math.PI / 180;
+				const endAngle = (pin.azimuth + sectorAngle / 2) * Math.PI / 180;
+				const steps = 24;
+				const sectorPath: google.maps.LatLngLiteral[] = [{ lat: pin.lat, lng: pin.lng }];
+				for (let i = 0; i <= steps; i++) {
+					const angle = startAngle + (endAngle - startAngle) * (i / steps);
+					sectorPath.push({
+						lat: pin.lat + dist * Math.cos(angle),
+						lng: pin.lng + dist * Math.sin(angle) / Math.cos(pin.lat * Math.PI / 180)
+					});
+				}
+				sectorPath.push({ lat: pin.lat, lng: pin.lng });
+
+				const existing = azimuthSectors.get(pin.id);
+				if (existing) {
+					existing.setPath(sectorPath);
+					existing.setOptions({ strokeColor: color, fillColor: color });
+					if (!existing.getMap()) existing.setMap(map);
+				} else {
+					const sector = new google.maps.Polygon({
+						paths: sectorPath,
+						strokeColor: color,
+						strokeWeight: 1.5,
+						strokeOpacity: 0.6,
+						fillColor: color,
+						fillOpacity: 0.12,
+						map,
+						clickable: false
+					});
+					azimuthSectors.set(pin.id, sector);
+				}
+			} else {
+				const existing = azimuthSectors.get(pin.id);
+				if (existing) { existing.setMap(null); azimuthSectors.delete(pin.id); }
+			}
+
+			if (pin.radius !== undefined && pin.radius !== null && pin.radius > 0 && visible) {
+				const existing = radiusCircles.get(pin.id);
+				if (existing) {
+					existing.setCenter({ lat: pin.lat, lng: pin.lng });
+					existing.setRadius(pin.radius);
+					existing.setOptions({ strokeColor: color, fillColor: color });
+					if (!existing.getMap()) existing.setMap(map);
+				} else {
+					const circle = new google.maps.Circle({
+						center: { lat: pin.lat, lng: pin.lng },
+						radius: pin.radius,
+						strokeColor: color,
+						strokeWeight: 1.5,
+						strokeOpacity: 0.6,
+						fillColor: color,
+						fillOpacity: 0.08,
+						map,
+						clickable: false
+					});
+					radiusCircles.set(pin.id, circle);
+				}
+			} else {
+				const existing = radiusCircles.get(pin.id);
+				if (existing) { existing.setMap(null); radiusCircles.delete(pin.id); }
+			}
+		}
+	});
+
 	// Syncs drawing shapes and note markers with drawing store state
 	$effect(() => {
 		if (!ready || !map) return;
@@ -472,7 +591,7 @@
 		const drawingIds = new Set(currentDrawings.map((d) => d.id));
 		const selectedId = drawingStore.selectedDrawingId;
 		const zoom = mapZoom;
-		const showNotes = notesVisible && zoom >= LABEL_MIN_ZOOM;
+		const showNotes = notesVisible && zoom >= labelMinZoom;
 		const layerMap = new Map(layerStore.layers.map((l) => [l.id, l]));
 
 		for (const [id, shape] of drawingShapes) {
@@ -756,6 +875,7 @@
 			const drawingLayerId = drawing.layerId;
 
 			let offset = 0;
+			// Advances the dash offset on each animation frame to create flowing motion
 			function animate() {
 				const layer = layerStore.layers.find((l) => l.id === drawingLayerId);
 				const currentColor = layer?.color ?? '#22d3ee';
@@ -771,7 +891,7 @@
 							scale: 5,
 							fillColor: currentColor,
 							fillOpacity: 1,
-							strokeColor: '#0f172a',
+							strokeColor: '#ffffff',
 							strokeWeight: 1.5
 						},
 						offset: `${offset}%`
@@ -893,10 +1013,10 @@
 			const el = document.createElement('div');
 			el.style.cssText = `
 				padding: 3px 8px; border-radius: 4px;
-				background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(34, 211, 238, 0.3);
-				color: #22d3ee; font-family: 'JetBrains Mono', monospace;
+				background: rgba(255, 255, 255, 0.95); border: 1px solid rgba(34, 211, 238, 0.3);
+				color: #0ea5e9; font-family: 'JetBrains Mono', monospace;
 				font-size: 11px; font-weight: 700; white-space: nowrap;
-				pointer-events: none;
+				pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 			`;
 			el.textContent = label;
 
@@ -912,10 +1032,10 @@
 		const totalEl = document.createElement('div');
 		totalEl.style.cssText = `
 			padding: 3px 8px; border-radius: 4px;
-			background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(245, 158, 11, 0.4);
+			background: rgba(255, 255, 255, 0.95); border: 1px solid rgba(245, 158, 11, 0.4);
 			color: #f59e0b; font-family: 'JetBrains Mono', monospace;
 			font-size: 12px; font-weight: 700; white-space: nowrap;
-			pointer-events: none;
+			pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 		`;
 		totalEl.textContent = totalDist < 1000 ? `Total: ${Math.round(totalDist)} m` : `Total: ${(totalDist / 1000).toFixed(2)} km`;
 		const totalMarker = new CustomMarker({
@@ -1156,16 +1276,127 @@
 		map.setTilt(tiltEnabled ? 45 : 0);
 	});
 
-	// Hides or shows Google Maps POI/business labels
+	// Renders tool circles (distance measurement circles from Tools panel)
 	$effect(() => {
 		if (!ready || !map) return;
-		const vis = poiLabelsVisible ? 'on' : 'off';
-		map.setOptions({
-			styles: [
-				{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: vis }] },
-				{ featureType: 'poi.business', elementType: 'all', stylers: [{ visibility: vis }] }
-			]
-		});
+		const currentIds = new Set(toolCircles.map(c => c.id));
+
+		for (const [id, shape] of toolCircleShapes) {
+			if (!currentIds.has(id)) { shape.setMap(null); toolCircleShapes.delete(id); }
+		}
+
+		for (const tc of toolCircles) {
+			const existing = toolCircleShapes.get(tc.id);
+			if (existing) {
+				existing.setCenter({ lat: tc.lat, lng: tc.lng });
+				existing.setRadius(tc.radius);
+			} else {
+				const circle = new google.maps.Circle({
+					center: { lat: tc.lat, lng: tc.lng },
+					radius: tc.radius,
+					strokeColor: tc.color || '#2563eb',
+					strokeWeight: 2,
+					strokeOpacity: 0.7,
+					fillColor: tc.color || '#2563eb',
+					fillOpacity: 0.06,
+					map,
+					clickable: false
+				});
+				toolCircleShapes.set(tc.id, circle);
+			}
+		}
+	});
+
+	// Renders sun direction and shadow lines from map center
+	$effect(() => {
+		if (!ready || !map) return;
+
+		if (sunAzimuth != null && sunAltitude != null && sunAltitude > 0) {
+			const center = map.getCenter()?.toJSON();
+			if (!center) return;
+
+			const bearing = sunAzimuth * Math.PI / 180;
+			const dist = 0.015;
+			const sunEnd = {
+				lat: center.lat + dist * Math.cos(bearing),
+				lng: center.lng + dist * Math.sin(bearing) / Math.cos(center.lat * Math.PI / 180)
+			};
+			const sunPath = [center, sunEnd];
+
+			if (sunLine) {
+				sunLine.setPath(sunPath);
+				if (!sunLine.getMap()) sunLine.setMap(map);
+			} else {
+				sunLine = new google.maps.Polyline({
+					path: sunPath,
+					strokeColor: '#f59e0b',
+					strokeWeight: 3,
+					strokeOpacity: 0.8,
+					map,
+					clickable: false,
+					icons: [{
+						icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: '#f59e0b', fillOpacity: 1, strokeWeight: 2, strokeColor: '#fff' },
+						offset: '100%'
+					}]
+				});
+			}
+
+			const shadowBearing = ((sunAzimuth + 180) % 360) * Math.PI / 180;
+			const shadowLen = dist * Math.min(3, 1 / Math.tan(Math.max(sunAltitude, 5) * Math.PI / 180));
+			const shadowEnd = {
+				lat: center.lat + shadowLen * Math.cos(shadowBearing),
+				lng: center.lng + shadowLen * Math.sin(shadowBearing) / Math.cos(center.lat * Math.PI / 180)
+			};
+			const shadowPath = [center, shadowEnd];
+
+			if (shadowLine) {
+				shadowLine.setPath(shadowPath);
+				if (!shadowLine.getMap()) shadowLine.setMap(map);
+			} else {
+				shadowLine = new google.maps.Polyline({
+					path: shadowPath,
+					strokeColor: '#475569',
+					strokeWeight: 4,
+					strokeOpacity: 0.3,
+					map,
+					clickable: false
+				});
+			}
+		} else {
+			if (sunLine) { sunLine.setMap(null); sunLine = null; }
+			if (shadowLine) { shadowLine.setMap(null); shadowLine = null; }
+		}
+	});
+
+	// Weather tile overlay from OpenWeatherMap
+	$effect(() => {
+		if (!ready || !map) return;
+
+		if (weatherLayer && weatherApiKey) {
+			if (currentWeatherLayer !== weatherLayer) {
+				if (weatherOverlay) {
+					map.overlayMapTypes.clear();
+					weatherOverlay = null;
+				}
+				weatherOverlay = new google.maps.ImageMapType({
+					getTileUrl: (coord, zoom) => {
+						return `https://tile.openweathermap.org/map/${weatherLayer}/${zoom}/${coord.x}/${coord.y}.png?appid=${weatherApiKey}`;
+					},
+					tileSize: new google.maps.Size(256, 256),
+					maxZoom: 18,
+					opacity: 0.6,
+					name: 'Weather'
+				});
+				map.overlayMapTypes.push(weatherOverlay);
+				currentWeatherLayer = weatherLayer;
+			}
+		} else {
+			if (weatherOverlay) {
+				map.overlayMapTypes.clear();
+				weatherOverlay = null;
+				currentWeatherLayer = null;
+			}
+		}
 	});
 
 	// Renders drawing labels at their geometric center and resolves overlaps with note markers
@@ -1175,8 +1406,8 @@
 		const currentDrawings = drawingStore.drawings;
 		const drawingIds = new Set(currentDrawings.map((d) => d.id));
 		const zoom = mapZoom;
-		const showLabels = labelsVisible && zoom >= LABEL_MIN_ZOOM;
-		const showNotes = notesVisible && zoom >= LABEL_MIN_ZOOM;
+		const showLabels = labelsVisible && zoom >= labelMinZoom;
+		const showNotes = notesVisible && zoom >= labelMinZoom;
 		const layerMap = new Map(layerStore.layers.map((l) => [l.id, l]));
 
 		for (const [id, marker] of drawingLabelMarkers) {
@@ -1253,7 +1484,7 @@
 			}
 		}
 
-		const hideDrawingLabels = zoom < LABEL_BLOCK_ZOOM;
+		const hideDrawingLabels = zoom < (labelMinZoom + 1);
 		for (const drawing of currentDrawings) {
 			if (drawing.type === 'note') continue;
 
@@ -1373,8 +1604,41 @@
 	// Captures the map container as a PNG image and triggers a download
 	export async function exportImage() {
 		if (!mapEl) return;
+
+		const labelEls = mapEl.querySelectorAll<HTMLElement>('div');
+		const saved: { el: HTMLElement; maxWidth: string; overflow: string; textOverflow: string; backdropFilter: string; webkitBackdropFilter: string }[] = [];
+		labelEls.forEach((el) => {
+			const s = el.style;
+			if (s.maxWidth || s.overflow === 'hidden' || s.backdropFilter) {
+				saved.push({
+					el,
+					maxWidth: s.maxWidth,
+					overflow: s.overflow,
+					textOverflow: s.textOverflow,
+					backdropFilter: s.backdropFilter,
+					webkitBackdropFilter: (s as any).webkitBackdropFilter || ''
+				});
+				if (s.textOverflow === 'ellipsis' || s.maxWidth) {
+					s.maxWidth = 'none';
+					s.overflow = 'visible';
+					s.textOverflow = 'unset';
+				}
+				s.backdropFilter = 'none';
+				(s as any).webkitBackdropFilter = 'none';
+			}
+		});
+
 		const html2canvas = (await import('html2canvas')).default;
 		const canvas = await html2canvas(mapEl, { useCORS: true, allowTaint: true });
+
+		for (const { el, maxWidth, overflow, textOverflow, backdropFilter, webkitBackdropFilter } of saved) {
+			el.style.maxWidth = maxWidth;
+			el.style.overflow = overflow;
+			el.style.textOverflow = textOverflow;
+			el.style.backdropFilter = backdropFilter;
+			(el.style as any).webkitBackdropFilter = webkitBackdropFilter;
+		}
+
 		const link = document.createElement('a');
 		link.download = `scatter-export-${Date.now()}.png`;
 		link.href = canvas.toDataURL('image/png');
@@ -1387,9 +1651,84 @@
 			map.setMapTypeId(satellite ? 'satellite' : 'roadmap');
 		}
 	}
+
+	let map3dEl: HTMLElement | null = null;
+	let map3dVisible = $state(false);
+	let Marker3DElementClass: any = null;
+
+	// Converts Google Maps zoom level to Map3DElement range (camera distance in meters)
+	function zoomToRange(zoom: number, lat: number): number {
+		const metersPerPx = 156543.03 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+		return metersPerPx * 400;
+	}
+
+	// Syncs current pins as 3D markers onto the Map3DElement
+	function sync3dMarkers() {
+		if (!map3dEl || !Marker3DElementClass) return;
+		const existing = map3dEl.querySelectorAll('gmp-marker-3d');
+		existing.forEach((el: Element) => el.remove());
+
+		for (const pin of pinStore.pins) {
+			if (!layerStore.isVisible(pin.layerId)) continue;
+			const layer = layerStore.layers.find(l => l.id === pin.layerId);
+			const color = layer?.color ?? '#22d3ee';
+			const marker = new Marker3DElementClass({
+				position: { lat: pin.lat, lng: pin.lng, altitude: 0 },
+				altitudeMode: 'CLAMP_TO_GROUND',
+				label: pin.label,
+				extruded: true,
+			});
+			map3dEl.append(marker);
+		}
+	}
+
+	// Toggles 3D photorealistic view overlay at current position
+	export async function goToGlobe() {
+		if (!map) return;
+
+		if (map3dVisible && map3dEl) {
+			map3dEl.style.display = 'none';
+			map3dVisible = false;
+			return;
+		}
+
+		const center = map.getCenter()?.toJSON() ?? { lat: 20, lng: 0 };
+		const zoom = map.getZoom() ?? 14;
+		const range = zoomToRange(zoom, center.lat);
+
+		if (!map3dEl) {
+			const maps3d = await google.maps.importLibrary('maps3d') as any;
+			const Map3DElement = maps3d.Map3DElement;
+			Marker3DElementClass = maps3d.Marker3DElement;
+
+			map3dEl = new Map3DElement({
+				center: { lat: center.lat, lng: center.lng, altitude: 0 },
+				range,
+				tilt: 60,
+				heading: map.getHeading() ?? 0,
+				mode: 'HYBRID',
+			});
+			map3dEl.style.cssText = 'position: absolute; inset: 0; z-index: 5;';
+			mapEl.parentElement?.appendChild(map3dEl);
+		} else {
+			(map3dEl as any).center = { lat: center.lat, lng: center.lng, altitude: 0 };
+			(map3dEl as any).range = range;
+			(map3dEl as any).tilt = 60;
+			(map3dEl as any).heading = map.getHeading() ?? 0;
+			map3dEl.style.display = '';
+		}
+
+		sync3dMarkers();
+		map3dVisible = true;
+	}
+
+	// Returns whether 3D view is active
+	export function is3dActive(): boolean {
+		return map3dVisible;
+	}
 </script>
 
-<div class="relative h-full w-full" style="isolation: isolate;">
+<div class="relative h-full w-full">
 	<div
 		bind:this={mapEl}
 		class="h-full w-full"
