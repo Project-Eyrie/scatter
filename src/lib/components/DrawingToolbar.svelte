@@ -179,6 +179,7 @@
 	.tool-btn:hover {
 		color: #1a1a1a;
 		background: #f5f5f5;
+		transform: translateY(-1px);
 	}
 
 	.tool-btn.active {

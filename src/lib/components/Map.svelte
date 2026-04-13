@@ -42,7 +42,9 @@
 	let visiblePinIds: Set<string> = new Set();
 	let azimuthSectors: Map<string, google.maps.Polygon> = new Map();
 	let toolCircleShapes: Map<string, google.maps.Circle> = new Map();
+	let sunLineGlow: google.maps.Polyline | null = null;
 	let sunLine: google.maps.Polyline | null = null;
+	let shadowLineGlow: google.maps.Polyline | null = null;
 	let shadowLine: google.maps.Polyline | null = null;
 	let weatherOverlay: google.maps.ImageMapType | null = null;
 	let currentWeatherLayer: string | null = null;
@@ -175,6 +177,24 @@
 
 		clusterer = new SimpleClusterer(map);
 
+		// Snaps a coordinate to the nearest pin if within ~20px on screen
+		function snapToPin(lat: number, lng: number): { lat: number; lng: number } {
+			const zoom = map?.getZoom() ?? 14;
+			const snapThreshold = 0.0003 * Math.pow(2, 14 - zoom);
+			let closest: { lat: number; lng: number } | null = null;
+			let closestDist = Infinity;
+			for (const pin of pinStore.pins) {
+				const dlat = pin.lat - lat;
+				const dlng = (pin.lng - lng) * Math.cos(lat * Math.PI / 180);
+				const dist = Math.sqrt(dlat * dlat + dlng * dlng);
+				if (dist < snapThreshold && dist < closestDist) {
+					closestDist = dist;
+					closest = { lat: pin.lat, lng: pin.lng };
+				}
+			}
+			return closest ?? { lat, lng };
+		}
+
 		map.addListener('click', (e: google.maps.MapMouseEvent) => {
 			if (!e.latLng) return;
 			if (Date.now() - lastDrawFinishTime < 300) return;
@@ -191,7 +211,8 @@
 				drawingStore.addPoint(lat, lng);
 			} else if (mode === 'circle') {
 				if (drawingStore.currentPoints.length === 0) {
-					drawingStore.addPoint(lat, lng);
+					const snapped = snapToPin(lat, lng);
+					drawingStore.addPoint(snapped.lat, snapped.lng);
 				} else {
 					const c = drawingStore.currentPoints[0];
 					const radius = google.maps.geometry.spherical.computeDistanceBetween(
@@ -207,7 +228,8 @@
 					lastDrawFinishTime = Date.now();
 				}
 			} else {
-				drawingStore.addPoint(lat, lng);
+				const snapped = snapToPin(lat, lng);
+				drawingStore.addPoint(snapped.lat, snapped.lng);
 			}
 		});
 
@@ -340,7 +362,7 @@
 	});
 
 	// Checks if an item is visible given the current timeline filter
-	function isTimeVisible(timestamp?: string, endTimestamp?: string): boolean {
+	function isTimeVisible(timestamp?: string): boolean {
 		if (timeFilter === null || timeFilter === undefined) return true;
 		if (!timestamp) return true;
 		const t = new Date(timestamp).getTime();
@@ -611,7 +633,7 @@
 		for (const drawing of currentDrawings) {
 			const layer = layerMap.get(drawing.layerId);
 			const layerVisible = layer ? layer.visible : true;
-			const timeVis = isTimeVisible(drawing.timestamp, drawing.endTimestamp);
+			const timeVis = isTimeVisible(drawing.timestamp);
 			const visible = layerVisible && timeVis && !timelineHiddenLayers.has(drawing.layerId);
 			const drawColor = layer?.color ?? drawing.color;
 			const isSelected = drawing.id === selectedId;
@@ -875,7 +897,6 @@
 			const drawingLayerId = drawing.layerId;
 
 			let offset = 0;
-			// Advances the dash offset on each animation frame to create flowing motion
 			function animate() {
 				const layer = layerStore.layers.find((l) => l.id === drawingLayerId);
 				const currentColor = layer?.color ?? '#22d3ee';
@@ -945,31 +966,27 @@
 
 			const isMeasure = mode === 'measure';
 			const isArrow = mode === 'arrow';
+			const dashIcon = {
+				icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeWeight: isMeasure ? 3 : 2.5, scale: 1 },
+				offset: '0',
+				repeat: '12px'
+			};
+			const icons: google.maps.IconSequence[] = [dashIcon];
+			if (isArrow) {
+				icons.push({
+					icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, fillColor: color, fillOpacity: 0.7, strokeColor: color, strokeWeight: 1 },
+					offset: '100%'
+				});
+			}
 			previewLine = new google.maps.Polyline({
 				path,
 				strokeColor: color,
-				strokeWeight: isMeasure ? 3 : 2.5,
-				strokeOpacity: isMeasure ? 0.85 : 0.6,
+				strokeWeight: 0,
+				strokeOpacity: 0,
 				geodesic: true,
 				map,
 				clickable: false,
-				...(isArrow
-					? {
-							icons: [
-								{
-									icon: {
-										path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-										scale: 3,
-										fillColor: color,
-										fillOpacity: 0.6,
-										strokeColor: color,
-										strokeWeight: 1
-									},
-									offset: '100%'
-									}
-								]
-							}
-						: {})
+				icons
 			});
 		}
 	});
@@ -1316,12 +1333,21 @@
 			if (!center) return;
 
 			const bearing = sunAzimuth * Math.PI / 180;
-			const dist = 0.015;
+			const dist = 0.03;
 			const sunEnd = {
 				lat: center.lat + dist * Math.cos(bearing),
 				lng: center.lng + dist * Math.sin(bearing) / Math.cos(center.lat * Math.PI / 180)
 			};
 			const sunPath = [center, sunEnd];
+
+			if (sunLineGlow) {
+				sunLineGlow.setPath(sunPath);
+				if (!sunLineGlow.getMap()) sunLineGlow.setMap(map);
+			} else {
+				sunLineGlow = new google.maps.Polyline({
+					path: sunPath, strokeColor: '#f59e0b', strokeWeight: 14, strokeOpacity: 0.15, map, clickable: false
+				});
+			}
 
 			if (sunLine) {
 				sunLine.setPath(sunPath);
@@ -1330,12 +1356,15 @@
 				sunLine = new google.maps.Polyline({
 					path: sunPath,
 					strokeColor: '#f59e0b',
-					strokeWeight: 3,
-					strokeOpacity: 0.8,
+					strokeWeight: 5,
+					strokeOpacity: 0.9,
 					map,
 					clickable: false,
 					icons: [{
-						icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: '#f59e0b', fillOpacity: 1, strokeWeight: 2, strokeColor: '#fff' },
+						icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#f59e0b', fillOpacity: 1, strokeWeight: 3, strokeColor: '#fff' },
+						offset: '100%'
+					}, {
+						icon: { path: google.maps.SymbolPath.CIRCLE, scale: 18, fillColor: '#f59e0b', fillOpacity: 0.15, strokeWeight: 0 },
 						offset: '100%'
 					}]
 				});
@@ -1349,21 +1378,32 @@
 			};
 			const shadowPath = [center, shadowEnd];
 
+			if (shadowLineGlow) {
+				shadowLineGlow.setPath(shadowPath);
+				if (!shadowLineGlow.getMap()) shadowLineGlow.setMap(map);
+			} else {
+				shadowLineGlow = new google.maps.Polyline({
+					path: shadowPath, strokeColor: '#1e293b', strokeWeight: 16, strokeOpacity: 0.08, map, clickable: false
+				});
+			}
+
 			if (shadowLine) {
 				shadowLine.setPath(shadowPath);
 				if (!shadowLine.getMap()) shadowLine.setMap(map);
 			} else {
 				shadowLine = new google.maps.Polyline({
 					path: shadowPath,
-					strokeColor: '#475569',
-					strokeWeight: 4,
-					strokeOpacity: 0.3,
+					strokeColor: '#334155',
+					strokeWeight: 6,
+					strokeOpacity: 0.25,
 					map,
 					clickable: false
 				});
 			}
 		} else {
+			if (sunLineGlow) { sunLineGlow.setMap(null); sunLineGlow = null; }
 			if (sunLine) { sunLine.setMap(null); sunLine = null; }
+			if (shadowLineGlow) { shadowLineGlow.setMap(null); shadowLineGlow = null; }
 			if (shadowLine) { shadowLine.setMap(null); shadowLine = null; }
 		}
 	});
@@ -1599,50 +1639,6 @@
 			map.setCenter(center);
 			map.setZoom(zoom);
 		}
-	}
-
-	// Captures the map container as a PNG image and triggers a download
-	export async function exportImage() {
-		if (!mapEl) return;
-
-		const labelEls = mapEl.querySelectorAll<HTMLElement>('div');
-		const saved: { el: HTMLElement; maxWidth: string; overflow: string; textOverflow: string; backdropFilter: string; webkitBackdropFilter: string }[] = [];
-		labelEls.forEach((el) => {
-			const s = el.style;
-			if (s.maxWidth || s.overflow === 'hidden' || s.backdropFilter) {
-				saved.push({
-					el,
-					maxWidth: s.maxWidth,
-					overflow: s.overflow,
-					textOverflow: s.textOverflow,
-					backdropFilter: s.backdropFilter,
-					webkitBackdropFilter: (s as any).webkitBackdropFilter || ''
-				});
-				if (s.textOverflow === 'ellipsis' || s.maxWidth) {
-					s.maxWidth = 'none';
-					s.overflow = 'visible';
-					s.textOverflow = 'unset';
-				}
-				s.backdropFilter = 'none';
-				(s as any).webkitBackdropFilter = 'none';
-			}
-		});
-
-		const html2canvas = (await import('html2canvas')).default;
-		const canvas = await html2canvas(mapEl, { useCORS: true, allowTaint: true });
-
-		for (const { el, maxWidth, overflow, textOverflow, backdropFilter, webkitBackdropFilter } of saved) {
-			el.style.maxWidth = maxWidth;
-			el.style.overflow = overflow;
-			el.style.textOverflow = textOverflow;
-			el.style.backdropFilter = backdropFilter;
-			(el.style as any).webkitBackdropFilter = webkitBackdropFilter;
-		}
-
-		const link = document.createElement('a');
-		link.download = `scatter-export-${Date.now()}.png`;
-		link.href = canvas.toDataURL('image/png');
-		link.click();
 	}
 
 	// Sets the map type (roadmap or satellite)

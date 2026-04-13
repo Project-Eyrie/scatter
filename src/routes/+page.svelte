@@ -160,7 +160,7 @@
 		weatherLoading = false;
 	}
 	let toolCircles = $state<Array<{ id: string; lat: number; lng: number; radius: number; label: string; color: string }>>([]);
-	let toolCircleRadius = $state(500);
+	let toolCircleRadius = $state(1000);
 	let toolCircleSearchEl = $state<HTMLInputElement | null>(null);
 	let toolCirclePendingLocation = $state<{ lat: number; lng: number; name: string } | null>(null);
 	let crowdManualArea = $state(0);
@@ -1773,7 +1773,7 @@
 	{/if}
 
 	{#if activeTool === 'distance'}
-		<div class="tool-panel" style="top: {(fpSelectedPin || fpSelectedDrawing) && propsOpen ? 'auto' : '40px'}; {(fpSelectedPin || fpSelectedDrawing) && propsOpen ? 'bottom: 10px;' : ''}">
+		<div class="tool-panel">
 			<div class="tool-panel-header">
 				<span class="tool-panel-title">DISTANCE CIRCLES</span>
 				<button class="tool-panel-close" onclick={() => (activeTool = null)}>
@@ -1795,7 +1795,7 @@
 						<span class="tp-unit">m</span>
 					</div>
 					<div class="tp-presets">
-						{#each [100, 250, 500, 1000, 5000] as r}
+						{#each [1000, 2000, 5000, 10000, 25000, 50000] as r}
 							<button class="tp-preset" class:active={toolCircleRadius === r} onclick={() => (toolCircleRadius = r)}>{r >= 1000 ? (r/1000) + 'km' : r + 'm'}</button>
 						{/each}
 					</div>
@@ -2535,6 +2535,11 @@
 		animation: splashLoad 0.7s ease-in-out forwards;
 	}
 
+	@keyframes panel-slide-in {
+		from { opacity: 0; transform: translateX(8px); }
+		to { opacity: 1; transform: translateX(0); }
+	}
+
 	@keyframes splashLoad {
 		0% { width: 0%; }
 		60% { width: 70%; }
@@ -2663,6 +2668,7 @@
 	.ctrl-btn:hover {
 		color: #1a1a1a;
 		background: #f5f5f5;
+		transform: scale(1.05);
 	}
 
 	.ctrl-btn.active {
@@ -3083,6 +3089,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		animation: panel-slide-in 0.15s ease-out;
 	}
 
 	.tool-panel-header {

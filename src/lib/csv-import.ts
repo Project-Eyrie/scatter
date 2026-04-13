@@ -124,12 +124,11 @@ export function detectColumnsFromData(rows: string[][]): { lat: number; lng: num
 	let bestLatScore = 0, bestLngScore = 0, bestTsScore = 0;
 
 	for (let col = 0; col < colCount; col++) {
-		let latHits = 0, lngHits = 0, tsHits = 0;
+		let latHits = 0, tsHits = 0;
 		for (const row of sample) {
 			const val = row[col]?.trim();
 			if (!val) continue;
 			if (isLat(val)) latHits++;
-			if (isLng(val)) lngHits++;
 			if (isTs(val)) tsHits++;
 		}
 		if (latHits > bestLatScore) { bestLatScore = latHits; bestLat = col; }

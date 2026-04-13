@@ -13,8 +13,19 @@ function ensureGlowStyle() {
 			100% { filter: brightness(1.3); }
 		}
 		@keyframes pin-fade-in {
-			0% { opacity: 0; transform: scale(0.5); }
-			100% { opacity: 1; transform: scale(1); }
+			0% { opacity: 0; transform: scale(0.5) translateY(8px); }
+			60% { opacity: 1; transform: scale(1.1) translateY(-2px); }
+			100% { opacity: 1; transform: scale(1) translateY(0); }
+		}
+		@keyframes pin-pulse {
+			0% { transform: scale(1); opacity: 0.6; }
+			50% { transform: scale(1.8); opacity: 0; }
+			100% { transform: scale(1); opacity: 0; }
+		}
+		@keyframes pin-hover-pop {
+			0% { transform: scale(1); }
+			50% { transform: scale(1.12); }
+			100% { transform: scale(1.08); }
 		}
 	`;
 	document.head.appendChild(style);
@@ -34,14 +45,26 @@ function brightenColor(hex: string): string {
 
 // Creates a pin marker with number badge, label tooltip, and teardrop pointer
 export function createMarkerContent(index: number, selected: boolean, layerColor: string, label?: string, showLabel = false, labelOffset?: { x: number; y: number }, hideLabel = false, timestamp?: string, timeHighlight = false, fadeIn = false, icon?: string): HTMLElement {
-	if (timeHighlight || fadeIn) ensureGlowStyle();
+	ensureGlowStyle();
 	const color = selected ? brightenColor(layerColor) : layerColor;
 	const wrapper = document.createElement('div');
 	wrapper.style.cssText = `
 		display: flex; flex-direction: column; align-items: center;
 		cursor: pointer; position: relative;
-		${fadeIn ? 'animation: pin-fade-in 0.4s ease-out;' : ''}
+		${fadeIn ? 'animation: pin-fade-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);' : ''}
 	`;
+
+	if (selected) {
+		const pulse = document.createElement('div');
+		pulse.style.cssText = `
+			position: absolute; top: 50%; left: 50%; width: 28px; height: 28px;
+			margin-left: -14px; margin-top: -18px;
+			border-radius: 50%; border: 2px solid ${color};
+			animation: pin-pulse 2s ease-out infinite;
+			pointer-events: none; z-index: 0;
+		`;
+		wrapper.appendChild(pulse);
+	}
 
 	const badge = document.createElement('div');
 	const glowShadow = timeHighlight
@@ -56,10 +79,12 @@ export function createMarkerContent(index: number, selected: boolean, layerColor
 		font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700;
 		color: #fff;
 		${glowShadow}
-		transition: all 0.15s;
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
 		position: relative;
 		z-index: ${timeHighlight ? 10 : 2};
 	`;
+	badge.addEventListener('mouseenter', () => { badge.style.transform = 'scale(1.15)'; });
+	badge.addEventListener('mouseleave', () => { badge.style.transform = 'scale(1)'; });
 	const iconDef = icon ? PIN_ICONS[icon] : undefined;
 	if (iconDef) {
 		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

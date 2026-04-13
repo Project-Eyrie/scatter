@@ -1277,10 +1277,12 @@
 		border-bottom: 1px solid #f0f0f0;
 		background: transparent;
 		cursor: pointer;
+		transition: background 0.1s ease, padding-left 0.1s ease;
 	}
 
 	.card:hover {
 		background: #f5f5f5;
+		padding-left: 12px;
 	}
 
 	.card.selected {
